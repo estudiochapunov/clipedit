@@ -9,194 +9,79 @@ echo "=== ClipEdit Installation ==="
 # 1. Verificar dependencias
 echo "1. Verificando dependencias..."
 MISSING=()
-for cmd in xclip pandoc xdg-mime; do
+for cmd in xclip xdg-mime; do
     if ! command -v $cmd &>/dev/null; then
         MISSING+=("$cmd")
     fi
 done
 
+if ! command -v pandoc &>/dev/null; then
+    echo "   ⚠️ pandoc no encontrado (para conversión)"
+fi
+
+if ! command -v wkhtmltopdf &>/dev/null; then
+    echo "   ⚠️ wkhtmltopdf no encontrado (para PDF)"
+fi
+
 if [ ${#MISSING[@]} -gt 0 ]; then
     echo "   ❌ Faltan dependencias: ${MISSING[*]}"
-    echo "   Instalalas con: sudo apt install xclip pandoc xdg-utils"
+    echo "   Instalalas con: sudo apt install xclip xdg-utils pandoc wkhtmltopdf"
     exit 1
 fi
 echo "   ✅ Dependencias ok"
 
-# 2. Agregar funciones al ~/.bashrc
-echo "2. Agregando funciones a ~/.bashrc..."
-
-# Verificar si ya están agregadas
-if grep -q "clip-edit-text()" ~/.bashrc 2>/dev/null; then
-    echo "   ⚠️ Funciones ya existen en ~/.bashrc"
-else
-    cat >> ~/.bashrc << 'FUNCS'
-
-# --- Clipboard Editor (ClipEdit) ---
-# Editor dinámico basado en el editor del sistema
-get_default_editor() {
-    if [[ -n "$EDITOR" ]]; then
-        echo "$EDITOR"
-        return 0
-    fi
-    local xed_default
-    xed_default=$(xdg-mime query default text/plain 2>/dev/null)
-    if [[ -n "$xed_default" ]]; then
-        echo "${xed_default%.desktop}"
-        return 0
-    fi
-    echo "xdg-open"
-    return 0
-}
-
-clip-edit-text() {
-    local editor output_file temp_file
-    editor=""
-    output_file=""
-    
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -e|--editor) editor="$2"; shift 2 ;;
-            -o|--output) output_file="$2"; shift 2 ;;
-            -h|--help)
-                echo "Uso: clip-edit-text [-e EDITOR] [-o ARCHIVO]"
-                return 0
-                ;;
-            *) shift ;;
-        esac
-    done
-    
-    temp_file=$(mktemp /tmp/clip-XXXXXX.txt)
-    xclip -selection clipboard -o > "$temp_file"
-    
-    if [[ -z "$editor" ]]; then
-        editor=$(get_default_editor)
-    fi
-    
-    "$editor" "$temp_file"
-    
-    if [[ -z "$output_file" ]]; then
-        echo "📋 Archivo: $temp_file"
-        echo "¿Copiar al clipboard? (s/n)"
-        read -r resp
-        if [[ "$resp" == "s" || "$resp" == "S" ]]; then
-            xclip -selection clipboard -i < "$temp_file"
-            echo "✅ Copiado"
-        fi
-        rm -f "$temp_file"
-    else
-        echo "📄 Guardado: $temp_file"
-    fi
-}
-
-clip-edit-html() {
-    local editor output_file temp_file
-    editor=""
-    output_file=""
-    
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -e|--editor) editor="$2"; shift 2 ;;
-            -o|--output) output_file="$2"; shift 2 ;;
-            *) shift ;;
-        esac
-    done
-    
-    temp_file=$(mktemp /tmp/clip-XXXXXX.html)
-    xclip -selection clipboard -t text/html -o > "$temp_file" 2>/dev/null || \
-    xclip -selection clipboard -o > "$temp_file"
-    
-    if [[ -z "$editor" ]]; then
-        editor=$(get_default_editor)
-    fi
-    
-    "$editor" "$temp_file"
-    
-    if [[ -z "$output_file" ]]; then
-        echo "📋 Archivo: $temp_file"
-        echo "¿Copiar al clipboard? (s/n)"
-        read -r resp
-        if [[ "$resp" == "s" || "$resp" == "S" ]]; then
-            xclip -selection clipboard -i < "$temp_file"
-            echo "✅ Copiado"
-        fi
-        rm -f "$temp_file"
-    else
-        echo "📄 Guardado: $temp_file"
-    fi
-}
-
-clip-to-markdown() { clip2md "$@"; }
-
-clip2md() {
-    local output_file temp_file targets
-    
-    output_file=""
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -o|--output) output_file="$2"; shift 2 ;;
-            -h|--help)
-                echo "Uso: clip2md [-o ARCHIVO]"; return 0 ;;
-            *) shift ;;
-        esac
-    done
-    
-    temp_file=$(mktemp /tmp/clip-XXXXXX.md)
-    targets=$(xclip -selection clipboard -t TARGETS -o 2>/dev/null)
-    
-    if echo "$targets" | grep -qw "text/html"; then
-        echo "→ HTML detectado"
-        xclip -selection clipboard -t text/html -o | pandoc -f html -t markdown > "$temp_file"
-    elif echo "$targets" | grep -qw "text/rtf"; then
-        echo "→ RTF detectado"
-        xclip -selection clipboard -t text/rtf -o | pandoc -f rtf -t markdown > "$temp_file"
-    else
-        echo "→ Texto plano"
-        xclip -selection clipboard -o > "$temp_file"
-    fi
-    
-    xclip -selection clipboard -i < "$temp_file"
-    [[ -z "$output_file" ]] && rm -f "$temp_file" || echo "📄 $temp_file"
-    echo "✅ Convertido a Markdown"
-}
-
-export PATH="$HOME/bin:$PATH"
-FUNCS
-    echo "   ✅ Funciones agregadas a ~/.bashrc"
-fi
-
-# 3. Agregar ~/bin al PATH
-echo "3. Configurando PATH..."
+# 2. Agregar ~/bin al PATH
+echo "2. Configurando PATH..."
 if ! grep -q 'export PATH="\$HOME/bin:\$PATH"' ~/.bashrc 2>/dev/null; then
     echo 'export PATH="$HOME/bin:$PATH"' >> ~/.bashrc
 fi
-echo "   ✅ PATH configurado"
 
-# 4. Crear wrapper script
-echo "4. Creando wrapper..."
+# Crear directorio ~/bin si no existe
 mkdir -p ~/bin
+
+# 3. Copiar clipedit
+echo "3. Instalando clipedit..."
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+cp "$SCRIPT_DIR/clipedit" ~/bin/clipedit
+chmod +x ~/bin/clipedit
+echo "   ✅ clipedit en ~/bin/clipedit"
+
+# 4. Crear wrapper para atajos (compatibilidad)
+echo "4. Creando wrapper..."
 cat > ~/bin/clip-wrapper << 'WRAPPER'
 #!/bin/bash
 shift
 CMD="$1"
 shift
 case "$CMD" in
-    text) bash -ic "source ~/.bashrc 2>/dev/null; clip-edit-text $*" ;;
-    html) bash -ic "source ~/.bashrc 2>/dev/null; clip-edit-html $*" ;;
-    2md|markdown) bash -ic "source ~/.bashrc 2>/dev/null; clip2md $*" ;;
-    *) echo "Uso: clip-wrapper text|html|2md [-e EDITOR] [-o FILE]" ;;
+    text)   ~/bin/clipedit -f text "$@" ;;
+    html)   ~/bin/clipedit -f html "$@" ;;
+    2md)    ~/bin/clipedit -t markdown "$@" ;;
+    *)      ~/bin/clipedit "$@" ;;
 esac
 WRAPPER
 chmod +x ~/bin/clip-wrapper
-echo "   ✅ Wrapper en ~/bin/clip-wrapper"
 
-# 5. Configurar atajos (MATE/GTK)
-echo "5. Configurando atajos de teclado..."
+# 5. Alias retrocompatibles en ~/.bashrc
+echo "5. Agregando alias retrocompatibles..."
+if ! grep -q "# --- ClipEdit Aliases ---" ~/.bashrc 2>/dev/null; then
+    cat >> ~/.bashrc << 'ALIAS'
+
+# --- ClipEdit Aliases (retrocompatibles) ---
+clip-edit-text() { ~/bin/clipedit -f text; }
+clip-edit-html() { ~/bin/clipedit -f html; }
+clip2md() { ~/bin/clipedit -t markdown; }
+clip-to-markdown() { ~/bin/clipedit -t markdown; }
+ALIAS
+fi
+
+# 6. Configurar atajos (MATE/GTK)
+echo "6. Configurando atajos de teclado..."
 dconf write /org/mate/marco/global-keybindings/custom-keybindings "[
-  {'name': 'clip-text', 'key': '<Super>c', 'command': '$HOME/bin/clip-wrapper text', 'binding': '<Super>c'},
-  {'name': 'clip-html', 'key': '<Super><Shift>c', 'command': '$HOME/bin/clip-wrapper html', 'binding': '<Super><Shift>c'},
-  {'name': 'clip-2md', 'key': '<Super><Control>c', 'command': '$HOME/bin/clip-wrapper 2md', 'binding': '<Super><Control>c'}
+  {'name': 'clipedit-edit', 'key': '<Super>c', 'command': '~/bin/clipedit', 'binding': '<Super>c'},
+  {'name': 'clipedit-md', 'key': '<Super><Shift>c', 'command': '~/bin/clipedit -t markdown', 'binding': '<Super><Shift>c'},
+  {'name': 'clipedit-html', 'key': '<Super><Control>c', 'command': '~/bin/clipedit -t html', 'binding': '<Super><Control>c'}
 ]"
-echo "   ✅ Atajos configurados"
 
 echo ""
 echo "=== INSTALACIÓN COMPLETA ==="
@@ -204,9 +89,12 @@ echo ""
 echo "Para usar, iniciá una nueva terminal o ejecutá:"
 echo "  source ~/.bashrc"
 echo ""
-echo "Funciones disponibles:"
-echo "  clip-edit-text [-e EDITOR] [-o ARCHIVO]"
-echo "  clip-edit-html  [-e EDITOR] [-o ARCHIVO]"
-echo "  clip2md         [-o ARCHIVO]"
+echo "Nuevo comando unificado:"
+echo "  clipedit                        # abrir en editor"
+echo "  clipedit -t markdown            # convertir a Markdown"
+echo "  clipedit -t html -s             # convertir a HTML con source"
 echo ""
-echo "Atajos (Win+C, Win+Shift+C, Win+Ctrl+C)"
+echo "Alias retrocompatibles:"
+echo "  clip-edit-text, clip-edit-html, clip2md, clip-to-markdown"
+echo ""
+echo "Atajos: Win+C, Win+Shift+C, Win+Ctrl+C"

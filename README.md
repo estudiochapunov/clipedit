@@ -1,14 +1,16 @@
 # ClipEdit - Clipboard Editor para Linux
 
-Herramienta CLI para editar el portapapeles con el editor predeterminado del sistema y convertir HTML/RTF a Markdown automáticamente.
+Herramienta CLI unificada para editar el portapapeles y convertir entre formatos.
 
 ## Features
 
-- ✨ **Editor dinámico**: Usa el editor de texto predeterminado del sistema
-- 📋 **Soporte múltiplo**: Texto plano, HTML, RTF
-- 🔄 **Detección automática**: Detecta el formato del portapapeles y convierte a Markdown
-- ⌨️ **Atajos configurables**: Win+C, Win+Shift+C, Win+Ctrl+C (en MATE)
-- 🖥️ **Compatible**: MATE, GNOME, KDE, XFCE, etc.
+- ✨ **Comando unificado**: `clipedit` reemplaza todas las funciones anteriores
+- 📋 **Detección automática**: Detecta formato del portapapeles (HTML, RTF, texto, imágenes)
+- 🔄 **Conversión flexible**: Cualquiera → Markdown, HTML, texto, PDF
+- 🖼️ **Soporte de imágenes**: Extrae imágenes del portapapeles y las incrusta
+- 🔗 **Source tracking**: Agrega URL de origen cuando está disponible
+- ⌨️ **Editor dinámico**: Usa el editor del sistema por defecto
+- 📦 **Compatible**: MATE, GNOME, KDE, XFCE, etc.
 
 ## Instalación
 
@@ -24,61 +26,126 @@ chmod +x install.sh
 El script de instalación verifica automáticamente. Para instalar manualmente:
 
 ```bash
-sudo apt install xclip xdg-utils pandoc
+sudo apt install xclip xdg-utils pandoc wkhtmltopdf
 ```
 
 | Paquete | Descripción |
 |---------|-------------|
 | `xclip` | Acceso al portapapeles |
 | `xdg-mime` | Detectar editor default (parte de xdg-utils) |
-| `pandoc` | Conversión HTML/RTF→Markdown |
+| `pandoc` | Conversión entre formatos |
+| `wkhtmltopdf` | Conversión HTML → PDF (opcional) |
 
 ## Uso
 
-### Funciones disponibles
+### Comando principal
 
 ```bash
-# Abrir portapapeles (texto plano) en el editor del sistema
-clip-edit-text
-
-# Con editor específico
-clip-edit-text -e vim
-clip-edit-text -e nvim
-clip-edit-text -e emacs30
-
-# Con archivo específico
-clip-edit-text -o ~/documento.txt
-
-# Combinado
-clip-edit-text -e vim -o ~/notas.txt
+clipedit [BANDERAS]
 ```
+
+### Banderas
+
+| Bandera | Descripción | Ejemplo |
+|---------|-------------|---------|
+| `-f, --from` | Formato de entrada (auto, html, rtf, md, text, image) | `-f html` |
+| `-t, --to` | Formato de salida (markdown, html, text, pdf) | `-t markdown` |
+| `-e, --editor` | Editor a usar (default: sistema) | `-e vim` |
+| `-o, --output` | Archivo de salida | `-o ~/doc.md` |
+| `-s, --source` | Incluir URL de origen si existe | `-s` |
+| `-h, --help` | Mostrar ayuda | |
+
+### Ejemplos de uso
 
 ```bash
-# Abrir portapapeles (HTML) en el editor
-clip-edit-html
+# Abrir portapapeles en editor (detectar formato)
+clipedit
 
-# Con editor específico
-clip-edit-html -e code
+# Convertir portapapeles a Markdown
+clipedit -t markdown
 
-# Con archivo específico
-clip-edit-html -o ~/pagina.html
+# Forzar conversión: HTML → Markdown
+clipedit -f html -t markdown
+
+# Convertir a HTML con source URL
+clipedit -t html -s
+
+# Abrir con editor específico
+clipedit -e nvim
+
+# Guardar en archivo específico
+clipedit -o ~/documento.md
+
+# Convertir a PDF (requiere wkhtmltopdf)
+clipedit -t pdf
+
+# Combinar: editor específico + archivo + source
+clipedit -e vim -o ~/notas.txt -s
 ```
+
+### Alias retrocompatibles
 
 ```bash
-# Convertir portapapeles (HTML/RTF) a Markdown y copiar al portapapeles
-clip2md
-
-# Guardar en archivo en lugar de portapapeles
-clip2md -o ~/documento.md
+# Funciones anteriores (todavía funcionan)
+clip-edit-text          # clipedit -t text -e
+clip-edit-html          # clipedit -t html -e  
+clip2md                 # clipedit -t markdown
+clip-to-markdown        # clipedit -t markdown
 ```
 
-### Atajos de teclado (MATE)
+## Entendiendo TARGETS
+
+### ¿Qué es TARGETS?
+
+El portapapeles de X11 no solo contiene texto - puede contener **múltiples formatos** al mismo tiempo. El comando `xclip -t TARGETS -o` muestra qué formatos están disponibles.
+
+### Formatos comunes del portapapeles
+
+| TARGET | Tipo | Origen típico |
+|--------|------|----------------|
+| `text/html` | HTML | Navegadores, LibreOffice |
+| `text/rtf` | RTF | LibreOffice, Word |
+| `text/plain` | Texto | Terminal, cualquier app |
+| `text/markdown` | Markdown | Editores de texto |
+| `image/png` | Imagen | Capturas de pantalla |
+| `image/jpeg` | Imagen | Fotos copiadas |
+| `chromium/x-source-url` | URL | Chrome/Chromium (origen web) |
+
+### Por qué es útil
+
+ClipEdit usa TARGETS para:
+1. **Detectar automáticamente** el formato del contenido
+2. **Extraer imágenes** del portapapeles
+3. **Incluir la URL de origen** cuando copiás de un navegador
+
+### Cómo verlo
+
+```bash
+# Ver todos los formatos disponibles
+xclip -selection clipboard -t TARGETS -o
+
+# Ver contenido en formato específico
+xclip -selection clipboard -t text/html -o
+xclip -selection clipboard -t image/png -o > imagen.png
+```
+
+### Source URL (Chromium)
+
+Cuando copiás desde Chrome/Chromium, el portapapeles incluye `chromium/x-source-url` con la URL de la página. Podés incluirla con la bandera `-s`:
+
+```
+Source: https://example.com/article
+---
+Contenido copiado...
+```
+
+## Atajos de teclado (MATE)
 
 | Atajo | Función |
 |-------|---------|
-| `Win+C` | clip-edit-text |
-| `Win+Shift+C` | clip-edit-html |
-| `Win+Ctrl+C` | clip2md |
+| `Win+C` | clipedit (abrir en editor) |
+| `Win+Shift+C` | clipedit -t markdown |
+| `Win+Ctrl+C` | clipedit -t html |
 
 Para configurar en MATE: System → Preferences → Hardware → Keyboard Shortcuts
 
@@ -90,21 +157,24 @@ Para configurar en MATE: System → Preferences → Hardware → Keyboard Shortc
 
 O manualmente:
 ```bash
-rm ~/bin/clip-wrapper
+rm ~/bin/clipedit ~/bin/clip-wrapper
 dconf write /org/mate/marco/global-keybindings/custom-keybindings "[]"
-# Eliminar las funciones de ~/.bashrc (buscar "# --- Clipboard Editor")
+# Eliminar funciones de ~/.bashrc (buscar "clipedit" o "ClipEdit")
 ```
 
 ## FAQ
 
-**P: ¿Funciona en GNOME?**  
+**P: ¿Funciona en GNOME/KDE/XFCE?**  
 R: Sí, usa `xdg-mime` para detectar el editor default.
 
 **P: ¿Puedo usar otro editor?**  
-R: Sí, con la bandera `-e` o `-e EDITOR`.
+R: Sí, con `-e EDITOR` (ej: `-e vim`, `-e emacs30`).
 
 **P: ¿Qué pasa si no tengo pandoc?**  
-R: `clip2md` no funcionará, pero `clip-edit-text` y `clip-edit-html` sí.
+R: La conversión no funcionará, pero editar portapapeles sí.
+
+**P: ¿Y si no tengo wkhtmltopdf?**  
+R: La conversión a PDF guardará HTML en su lugar.
 
 ## Licencia
 

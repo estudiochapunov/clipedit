@@ -1,0 +1,293 @@
+#!/bin/bash
+# clipedit - Clipboard Editor unificado para Linux
+# https://github.com/estudiochapunov/clipedit
+#
+# Uso: clipedit [BANDERAS]
+#
+# Banderas:
+#   -f, --from FORMATO   Formato de entrada (auto, html, rtf, md, text, image)
+#   -t, --to FORMATO     Formato de salida (markdown, html, text, pdf)
+#   -e, --editor EDITOR  Editor a usar (default: sistema)
+#   -o, --output ARCHIVO Archivo de salida (default: portapapeles/clipboard)
+#   -s, --source         Incluir URL de origen (solo si existe)
+#   -h, --help           Mostrar ayuda
+#
+# Formatos soportados por pandoc: markdown, html, rtf, text, docx, odt, pdf, etc.
+
+set -e
+
+# Función auxiliar: detectar editor default del sistema
+get_default_editor() {
+    if [[ -n "$EDITOR" ]]; then
+        echo "$EDITOR"
+        return 0
+    fi
+    local xed_default
+    xed_default=$(xdg-mime query default text/plain 2>/dev/null)
+    if [[ -n "$xed_default" ]]; then
+        echo "${xed_default%.desktop}"
+        return 0
+    fi
+    echo "xdg-open"
+    return 0
+}
+
+# Función auxiliar: obtener source URL si existe
+get_source_url() {
+    xclip -selection clipboard -t chromium/x-source-url -o 2>/dev/null || true
+}
+
+# Función auxiliar: obtener formatos disponibles en portapapeles
+get_targets() {
+    xclip -selection clipboard -t TARGETS -o 2>/dev/null || echo "text/plain"
+}
+
+# Función auxiliar: detectar tipo de contenido
+detect_content_type() {
+    local targets="$1"
+    
+    if echo "$targets" | grep -qw "image/png"; then
+        echo "image-png"
+    elif echo "$targets" | grep -qw "image/jpeg"; then
+        echo "image-jpeg"
+    elif echo "$targets" | grep -qw "image/gif"; then
+        echo "image-gif"
+    elif echo "$targets" | grep -qw "text/html"; then
+        echo "html"
+    elif echo "$targets" | grep -qw "text/rtf"; then
+        echo "rtf"
+    elif echo "$targets" | grep -qw "text/markdown"; then
+        echo "markdown"
+    else
+        echo "text"
+    fi
+}
+
+# Función auxiliar: obtener extensión de imagen
+get_image_ext() {
+    case "$1" in
+        image-png) echo "png" ;;
+        image-jpeg) echo "jpg" ;;
+        image-gif) echo "gif" ;;
+        *) echo "png" ;;
+    esac
+}
+
+# Función principal
+main() {
+    local from="auto"
+    local to="edit"
+    local editor=""
+    local output_file=""
+    local include_source=false
+    local temp_file
+    
+    # Parsear argumentos
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -f|--from)
+                from="$2"
+                shift 2
+                ;;
+            -t|--to)
+                to="$2"
+                shift 2
+                ;;
+            -e|--editor)
+                editor="$2"
+                shift 2
+                ;;
+            -o|--output)
+                output_file="$2"
+                shift 2
+                ;;
+            -s|--source)
+                include_source=true
+                shift
+                ;;
+            -h|--help)
+                echo "clipedit - Clipboard Editor unificado"
+                echo ""
+                echo "Uso: clipedit [BANDERAS]"
+                echo ""
+                echo "Banderas:"
+                echo "  -f, --from FORMATO   Formato de entrada (auto, html, rtf, md, text, image)"
+                echo "  -t, --to FORMATO     Formato de salida (markdown, html, text, pdf)"
+                echo "  -e, --editor EDITOR  Editor a usar (default: sistema)"
+                echo "  -o, --output ARCHIVO Archivo de salida"
+                echo "  -s, --source         Incluir URL de origen si existe"
+                echo "  -h, --help           Mostrar esta ayuda"
+                echo ""
+                echo "Ejemplos:"
+                echo "  clipedit                          # Abrir en editor (detectar formato)"
+                echo "  clipedit -t markdown              # Convertir a Markdown"
+                echo "  clipedit -f html -t markdown      # Forzar HTML a Markdown"
+                echo "  clipedit -t html -s               # Convertir a HTML con source"
+                echo "  clipedit -e vim                   # Abrir con Vim"
+                echo "  clipedit -o ~/doc.md             # Guardar en archivo"
+                return 0
+                ;;
+            *)
+                shift
+                ;;
+        esac
+    done
+    
+    # Obtener targets del portapapeles
+    local targets
+    targets=$(get_targets)
+    
+    # Detectar tipo de contenido si from=auto
+    if [[ "$from" == "auto" ]]; then
+        from=$(detect_content_type "$targets")
+    fi
+    
+    # Determinar archivo de salida
+    if [[ -n "$output_file" ]]; then
+        temp_file="$output_file"
+    else
+        case "$to" in
+            markdown) temp_file=$(mktemp /tmp/clip-XXXXXX.md) ;;
+            html)     temp_file=$(mktemp /tmp/clip-XXXXXX.html) ;;
+            text)     temp_file=$(mktemp /tmp/clip-XXXXXX.txt) ;;
+            pdf)      temp_file=$(mktemp /tmp/clip-XXXXXX.html) ;;
+            *)        temp_file=$(mktemp /tmp/clip-XXXXXX.txt) ;;
+        esac
+    fi
+    
+    # Procesar según tipo de contenido
+    local source_url=""
+    if [[ "$include_source" == "true" ]]; then
+        source_url=$(get_source_url)
+    fi
+    
+    # Imagen: extraer y guardar
+    if [[ "$from" == image-png || "$from" == image-jpeg || "$from" == image-gif ]]; then
+        local img_ext
+        img_ext=$(get_image_ext "$from")
+        local img_file
+        img_file=$(mktemp /tmp/clipimg-XXXXXX.${img_ext})
+        
+        # Extraer imagen
+        xclip -selection clipboard -t "image/${img_ext}" -o > "$img_file" 2>/dev/null || \
+        xclip -selection clipboard -o > "$img_file"
+        
+        echo "📷 Imagen guardada: $img_file"
+        
+        # Crear referencia según formato de salida
+        case "$to" in
+            markdown)
+                echo "![image]($img_file)" > "$temp_file"
+                ;;
+            html)
+                echo "<img src=\"$img_file\" alt=\"image\">" > "$temp_file"
+                ;;
+            *)
+                echo "Imagen: $img_file" > "$temp_file"
+                ;;
+        esac
+        
+        if [[ -n "$output_file" ]]; then
+            echo "📄 $temp_file"
+        else
+            # Copiar al portapapeles
+            cat "$temp_file" | xclip -selection clipboard -i
+        fi
+        return 0
+    fi
+    
+    # Texto/HTML/RTF: procesar con pandoc
+    local content
+    case "$from" in
+        html)
+            content=$(xclip -selection clipboard -t text/html -o 2>/dev/null)
+            ;;
+        rtf)
+            content=$(xclip -selection clipboard -t text/rtf -o 2>/dev/null)
+            ;;
+        markdown)
+            content=$(xclip -selection clipboard -t text/markdown -o 2>/dev/null)
+            ;;
+        *)
+            content=$(xclip -selection clipboard -o)
+            ;;
+    esac
+    
+    # Agregar source si corresponde
+    if [[ -n "$source_url" ]]; then
+        content="Source: $source_url
+---
+$content"
+    fi
+    
+    # Convertir según formato de salida
+    case "$to" in
+        markdown)
+            echo "$content" | pandoc -f html -t markdown > "$temp_file" 2>/dev/null || \
+            echo "$content" | pandoc -f rtf -t markdown > "$temp_file" 2>/dev/null || \
+            echo "$content" > "$temp_file"
+            ;;
+        html)
+            echo "$content" | pandoc -f markdown -t html > "$temp_file" 2>/dev/null || \
+            echo "$content" > "$temp_file"
+            ;;
+        text)
+            echo "$content" > "$temp_file"
+            ;;
+        pdf)
+            echo "$content" | pandoc -f markdown -t html > "$temp_file"
+            # Crear PDF si wkhtmltopdf está disponible
+            if command -v wkhtmltopdf &>/dev/null; then
+                local pdf_file="${temp_file%.html}.pdf"
+                wkhtmltopdf "$temp_file" "$pdf_file" 2>/dev/null
+                rm -f "$temp_file"
+                temp_file="$pdf_file"
+                echo "📄 PDF: $temp_file"
+            else
+                echo "⚠️ wkhtmltopdf no está instalado (sudo apt install wkhtmltopdf)"
+                echo "📄 Guardado como HTML: $temp_file"
+            fi
+            ;;
+        edit)
+            # Modo editor: abrir con editor
+            echo "$content" > "$temp_file"
+            
+            if [[ -z "$editor" ]]; then
+                editor=$(get_default_editor)
+            fi
+            
+            "$editor" "$temp_file"
+            
+            # Si es archivo temporal, preguntar si copiar de vuelta
+            if [[ -z "$output_file" ]]; then
+                echo "📋 Archivo: $temp_file"
+                echo "¿Copiar al clipboard? (s/n)"
+                read -r resp
+                if [[ "$resp" == "s" || "$resp" == "S" ]]; then
+                    cat "$temp_file" | xclip -selection clipboard -i
+                    echo "✅ Copiado"
+                fi
+                rm -f "$temp_file"
+            else
+                echo "📄 Guardado: $temp_file"
+            fi
+            return 0
+            ;;
+    esac
+    
+    # Si hay output file o es modo conversión
+    if [[ -n "$output_file" || "$to" != "edit" ]]; then
+        # Copiar resultado al portapapeles
+        cat "$temp_file" | xclip -selection clipboard -i
+        
+        if [[ -z "$output_file" ]]; then
+            rm -f "$temp_file"
+        else
+            echo "📄 Guardado: $temp_file"
+        fi
+    fi
+    
+    echo "✅ Convertido a $to"
+}
+
+main "$@"
