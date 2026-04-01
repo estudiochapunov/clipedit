@@ -1,18 +1,18 @@
-# ClipEdit - Clipboard Editor para Linux
+# ClipEdit - Clipboard Editor for Linux
 
-Herramienta CLI unificada para editar el portapapeles y convertir entre formatos.
+CLI tool to edit the clipboard and convert between formats.
 
 ## Features
 
-- ✨ **Comando unificado**: `clipedit` reemplaza todas las funciones anteriores
-- 📋 **Detección automática**: Detecta formato del portapapeles (HTML, RTF, texto, imágenes)
-- 🔄 **Conversión flexible**: Cualquiera → Markdown, HTML, texto, PDF
-- 🖼️ **Soporte de imágenes**: Extrae imágenes del portapapeles y las incrusta
-- 🔗 **Source tracking**: Agrega URL de origen cuando está disponible
-- ⌨️ **Editor dinámico**: Usa el editor del sistema por defecto
+- ✨ **Unified command**: `clipedit` replaces all previous functions
+- 📋 **Auto-detection**: Detects clipboard format (HTML, RTF, text, images)
+- 🔄 **Flexible conversion**: Any → Markdown, HTML, text, PDF
+- 🖼️ **Image support**: Extracts images from clipboard and embeds them
+- 🔗 **Source tracking**: Adds source URL when available
+- ⌨️ **Dynamic editor**: Uses system default editor
 - 📦 **Compatible**: MATE, GNOME, KDE, XFCE, etc.
 
-## Instalación
+## Installation
 
 ```bash
 git clone https://github.com/estudiochapunov/clipedit.git
@@ -21,165 +21,163 @@ chmod +x install.sh
 ./install.sh
 ```
 
-## Dependencias
+## Dependencies
 
-El script de instalación verifica automáticamente. Para instalar manualmente:
-
+Install manually:
 ```bash
 sudo apt install xclip xdg-utils pandoc wkhtmltopdf
 ```
 
-| Paquete | Descripción |
+| Package | Description |
 |---------|-------------|
-| `xclip` | Acceso al portapapeles |
-| `xdg-mime` | Detectar editor default (parte de xdg-utils) |
-| `pandoc` | Conversión entre formatos |
-| `wkhtmltopdf` | Conversión HTML → PDF (opcional) |
+| `xclip` | Clipboard access |
+| `xdg-mime` | Detect default editor (xdg-utils) |
+| `pandoc` | Format conversion |
+| `wkhtmltopdf` | HTML → PDF (optional) |
 
-## Uso
+## Usage
 
-### Comando principal
+### Main command
 
 ```bash
-clipedit [BANDERAS]
+clipedit [FLAGS]
 ```
 
-### Banderas
+### Flags
 
-| Bandera | Descripción | Ejemplo |
-|---------|-------------|---------|
-| `-f, --from` | Formato de entrada (auto, html, rtf, md, text, image) | `-f html` |
-| `-t, --to` | Formato de salida (markdown, html, text, pdf) | `-t markdown` |
-| `-e, --editor` | Editor a usar (default: sistema) | `-e vim` |
-| `-o, --output` | Archivo de salida | `-o ~/doc.md` |
-| `-s, --source` | Incluir URL de origen si existe | `-s` |
-| `-h, --help` | Mostrar ayuda | |
+| Flag | Description | Example |
+|------|-------------|---------|
+| `-f, --from` | Input format (auto, html, rtf, md, text, image) | `-f html` |
+| `-t, --to` | Output format (markdown, html, text, pdf) | `-t markdown` |
+| `-e, --editor` | Editor to use (default: system) | `-e vim` |
+| `-o, --output` | Output file | `-o ~/doc.md` |
+| `-s, --source` | Include source URL if exists | `-s` |
+| `-h, --help` | Show help | |
 
-### Ejemplos de uso
+### Examples
 
 ```bash
-# Abrir portapapeles en editor (detectar formato)
+# Open clipboard in editor (auto-detect format)
 clipedit
 
-# Convertir portapapeles a Markdown
+# Convert clipboard to Markdown
 clipedit -t markdown
 
-# Forzar conversión: HTML → Markdown
+# Force conversion: HTML → Markdown
 clipedit -f html -t markdown
 
-# Convertir a HTML con source URL
+# Convert to HTML with source URL
 clipedit -t html -s
 
-# Abrir con editor específico
+# Open with specific editor
 clipedit -e nvim
 
-# Guardar en archivo específico
+# Save to specific file
 clipedit -o ~/documento.md
 
-# Convertir a PDF (requiere wkhtmltopdf)
+# Convert to PDF (requires wkhtmltopdf)
 clipedit -t pdf
 
-# Combinar: editor específico + archivo + source
+# Combine: specific editor + file + source
 clipedit -e vim -o ~/notas.txt -s
 ```
 
-### Alias retrocompatibles
+### Backward-compatible aliases
 
 ```bash
-# Funciones anteriores (todavía funcionan)
-clip-edit-text          # clipedit -t text -e
-clip-edit-html          # clipedit -t html -e  
-clip2md                 # clipedit -t markdown
-clip-to-markdown        # clipedit -t markdown
+clip-edit-text    # clipedit -f text -e
+clip-edit-html    # clipedit -f html -e  
+clip2md           # clipedit -t markdown
+clip-to-markdown  # clipedit -t markdown
 ```
 
-## Entendiendo TARGETS
+## Understanding TARGETS
 
-### ¿Qué es TARGETS?
+### What is TARGETS?
 
-El portapapeles de X11 no solo contiene texto - puede contener **múltiples formatos** al mismo tiempo. El comando `xclip -t TARGETS -o` muestra qué formatos están disponibles.
+X11 clipboard doesn't just hold text - it can contain **multiple formats** at the same time. The command `xclip -t TARGETS -o` shows what formats are available.
 
-### Formatos comunes del portapapeles
+### Common clipboard formats
 
-| TARGET | Tipo | Origen típico |
+| TARGET | Type | Typical origin |
 |--------|------|----------------|
-| `text/html` | HTML | Navegadores, LibreOffice |
+| `text/html` | HTML | Browsers, LibreOffice |
 | `text/rtf` | RTF | LibreOffice, Word |
-| `text/plain` | Texto | Terminal, cualquier app |
-| `text/markdown` | Markdown | Editores de texto |
-| `image/png` | Imagen | Capturas de pantalla |
-| `image/jpeg` | Imagen | Fotos copiadas |
-| `chromium/x-source-url` | URL | Chrome/Chromium (origen web) |
+| `text/plain` | Text | Terminal, any app |
+| `text/markdown` | Markdown | Text editors |
+| `image/png` | Image | Screenshots |
+| `image/jpeg` | Image | Copied photos |
+| `chromium/x-source-url` | URL | Chrome/Chromium (web origin) |
 
-### Por qué es útil
+### Why is it useful?
 
-ClipEdit usa TARGETS para:
-1. **Detectar automáticamente** el formato del contenido
-2. **Extraer imágenes** del portapapeles
-3. **Incluir la URL de origen** cuando copiás de un navegador
+ClipEdit uses TARGETS to:
+1. **Auto-detect** content format
+2. **Extract images** from clipboard
+3. **Include origin URL** when copying from a browser
 
-### Cómo verlo
+### How to see it
 
 ```bash
-# Ver todos los formatos disponibles
+# See all available formats
 xclip -selection clipboard -t TARGETS -o
 
-# Ver contenido en formato específico
+# See content in specific format
 xclip -selection clipboard -t text/html -o
-xclip -selection clipboard -t image/png -o > imagen.png
+xclip -selection clipboard -t image/png -o > image.png
 ```
 
 ### Source URL (Chromium)
 
-Cuando copiás desde Chrome/Chromium, el portapapeles incluye `chromium/x-source-url` con la URL de la página. Podés incluirla con la bandera `-s`:
+When copying from Chrome/Chromium, clipboard includes `chromium/x-source-url` with the page URL. You can include it with `-s` flag:
 
 ```
 Source: https://example.com/article
 ---
-Contenido copiado...
+Copied content...
 ```
 
-## Atajos de teclado (MATE)
+## Keyboard shortcuts (MATE)
 
-| Atajo | Función |
-|-------|---------|
-| `Win+C` | clipedit (abrir en editor) |
+| Shortcut | Function |
+|----------|----------|
+| `Win+C` | clipedit (open in editor) |
 | `Win+Shift+C` | clipedit -t markdown |
 | `Win+Ctrl+C` | clipedit -t html |
 
-Para configurar en MATE: System → Preferences → Hardware → Keyboard Shortcuts
+Configure in MATE: System → Preferences → Hardware → Keyboard Shortcuts
 
-## Desinstalación
+## Uninstallation
 
 ```bash
 ./UNINSTALL.sh
 ```
 
-O manualmente:
+Or manually:
 ```bash
 rm ~/bin/clipedit ~/bin/clip-wrapper
 dconf write /org/mate/marco/global-keybindings/custom-keybindings "[]"
-# Eliminar funciones de ~/.bashrc (buscar "clipedit" o "ClipEdit")
+# Remove functions from ~/.bashrc (search for "clipedit" or "ClipEdit")
 ```
 
 ## FAQ
 
-**P: ¿Funciona en GNOME/KDE/XFCE?**  
-R: Sí, usa `xdg-mime` para detectar el editor default.
+**Q: Does it work in GNOME/KDE/XFCE?**  
+A: Yes, uses `xdg-mime` to detect default editor.
 
-**P: ¿Puedo usar otro editor?**  
-R: Sí, con `-e EDITOR` (ej: `-e vim`, `-e emacs30`).
+**Q: Can I use a different editor?**  
+A: Yes, with `-e EDITOR` (e.g., `-e vim`, `-e emacs30`).
 
-**P: ¿Qué pasa si no tengo pandoc?**  
-R: La conversión no funcionará, pero editar portapapeles sí.
+**Q: What if I don't have pandoc?**  
+A: Conversion won't work, but clipboard editing will.
 
-**P: ¿Y si no tengo wkhtmltopdf?**  
-R: La conversión a PDF guardará HTML en su lugar.
+**Q: What if I don't have wkhtmltopdf?**  
+A: PDF conversion will save as HTML instead.
 
-## Licencia
+## License
 
-MIT License - Puedes usar, modificar y distribuir libremente.
+MIT License - You can use, modify and distribute freely.
 
-## Autor
+## Author
 
 estudiochapunov - https://github.com/estudiochapunov
