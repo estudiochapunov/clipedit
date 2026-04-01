@@ -277,16 +277,32 @@ $content"
     
     # Si hay output file o es modo conversión
     if [[ -n "$output_file" || "$to" != "edit" ]]; then
-        # Copiar resultado al portapapeles
-        cat "$temp_file" | xclip -selection clipboard -i
-        
+        # Siempre mostrar donde quedó el archivo temporal
         if [[ -z "$output_file" ]]; then
+            echo "📄 Temporal: $temp_file"
+        fi
+        
+        # Abrir en editor para revisar resultado
+        if [[ -z "$output_file" ]]; then
+            local editor
+            editor=$(get_default_editor)
+            echo "📝 Abriendo en $editor..."
+            "$editor" "$temp_file"
+            
+            # Preguntar si copiar al portapapeles
+            echo "¿Copiar contenido al clipboard? (s/n)"
+            read -r resp
+            if [[ "$resp" == "s" || "$resp" == "S" ]]; then
+                cat "$temp_file" | xclip -selection clipboard -i
+                echo "✅ Copiado al clipboard"
+            fi
             rm -f "$temp_file"
         else
+            cat "$temp_file" | xclip -selection clipboard -i
             echo "📄 Guardado: $temp_file"
         fi
     fi
-    
+
     echo "✅ Convertido a $to"
 }
 
