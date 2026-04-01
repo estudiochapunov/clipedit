@@ -1,0 +1,13 @@
+# Archivos temporales
+*.tmp
+*.log
+*.swp
+*.swo
+*~
+
+# Archivos del portapapeles
+/tmp/clip-*
+
+# OS
+.DS_Store
+Thumbs.db
