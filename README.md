@@ -72,6 +72,15 @@ clipedit [FLAGS]
 | `--no-emoji` | Use sober ClipEdit messages without emojis; clipboard content is not changed | |
 | `--strip-line-numbers` | Remove line numbers copied from AI chats, diffs or code viewers | |
 | `--join-lines SPEC` | Join line ranges into one line (`all`, `u3,7;9,14`, `3,7;9,14`) | |
+| `--stdout` | Print final output without touching the editor or clipboard | |
+| `--trim` | Remove leading/trailing blank lines and trailing spaces | |
+| `--dedent` | Remove common indentation | |
+| `--strip-code-fence` | Remove Markdown code fences | |
+| `--strip-prompts` | Remove copied shell prompts | |
+| `--squeeze-blank-lines` | Collapse repeated blank lines | |
+| `--slug` | Convert text to a lowercase URL/file slug | |
+| `--filename-safe` | Convert text to a filesystem-safe name | |
+| `--wrap-code-fence LANG` | Wrap content in a Markdown code fence | |
 | `--version` | Show ClipEdit version | |
 | `-h, --help` | Show help | |
 
@@ -137,6 +146,24 @@ clipedit --join-lines 'u3,7;9,14' --plain
 
 # Fix copied AI code: strip line numbers, then join lines 2 through 4
 clipedit --strip-line-numbers --join-lines u2,4 --plain
+
+# Print final output to terminal without changing clipboard
+clipedit --strip-code-fence --dedent --stdout
+
+# Remove shell prompts from copied terminal snippets
+clipedit --strip-prompts --plain
+
+# Trim, dedent, and collapse repeated blank lines
+clipedit --trim --dedent --squeeze-blank-lines --plain
+
+# Convert clipboard text to slug
+clipedit --slug
+
+# Convert clipboard text to a filename-safe string
+clipedit --filename-safe
+
+# Wrap clipboard content as fenced bash code
+clipedit --wrap-code-fence bash --plain
 
 # Extract one raw clipboard target to stdout
 clipedit --target text/html
@@ -223,6 +250,27 @@ clipedit --join-lines '3,7;9,14' --plain
 
 For selected ranges, lines outside the ranges are preserved. Joined lines are
 separated with one space.
+
+Additional cleanup filters:
+
+```bash
+# Print cleaned result without changing clipboard
+clipedit --strip-code-fence --dedent --stdout
+
+# Turn copied shell sessions into reusable commands
+clipedit --strip-prompts --plain
+
+# Normalize whitespace
+clipedit --trim --squeeze-blank-lines --plain
+
+# Convert title text to reusable names
+clipedit --slug
+clipedit --filename-safe
+
+# Add or remove Markdown code fences
+clipedit --strip-code-fence --plain
+clipedit --wrap-code-fence bash --plain
+```
 
 ### Source URL (Chromium)
 

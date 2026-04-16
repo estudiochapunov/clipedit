@@ -20,6 +20,15 @@
 #   --no-emoji           Mostrar salida sobria, sin emojis
 #   --strip-line-numbers Eliminar numeracion de lineas copiada desde chats/IA
 #   --join-lines SPEC    Unir rangos de lineas (all, u3,7;9,14 o 3,7;9,14)
+#   --stdout             Imprimir resultado final sin tocar portapapeles/editor
+#   --trim               Quitar bordes vacios y espacios finales
+#   --dedent             Quitar indentacion comun
+#   --strip-code-fence   Quitar fences Markdown de codigo
+#   --strip-prompts      Quitar prompts de terminal copiados
+#   --squeeze-blank-lines Colapsar lineas vacias repetidas
+#   --slug               Convertir texto a slug
+#   --filename-safe      Convertir texto a nombre de archivo seguro
+#   --wrap-code-fence LANG Envolver en fence Markdown
 #   --version            Mostrar version
 #   -h, --help           Mostrar ayuda
 #
@@ -27,7 +36,7 @@
 
 set -e
 
-VERSION="1.2.0"
+VERSION="1.3.0"
 
 # Función auxiliar: detectar editor default del sistema
 get_default_editor() {
@@ -245,17 +254,158 @@ join_lines_filter() {
     '
 }
 
+trim_filter() {
+    sed -E 's/[[:space:]]+$//' | awk '
+        NF { seen = 1 }
+        seen { lines[++n] = $0 }
+        END {
+            while (n > 0 && lines[n] ~ /^[[:space:]]*$/) n--
+            for (i = 1; i <= n; i++) print lines[i]
+        }
+    '
+}
+
+dedent_filter() {
+    awk '
+        function leading_spaces(s,    match_text) {
+            match(s, /^[ \t]*/)
+            match_text = substr(s, RSTART, RLENGTH)
+            return length(match_text)
+        }
+        /^[ \t]*$/ {
+            lines[++n] = $0
+            next
+        }
+        {
+            indent = leading_spaces($0)
+            if (!have_min || indent < min_indent) {
+                min_indent = indent
+                have_min = 1
+            }
+            lines[++n] = $0
+        }
+        END {
+            for (i = 1; i <= n; i++) {
+                if (lines[i] ~ /^[ \t]*$/) {
+                    print ""
+                } else {
+                    print substr(lines[i], min_indent + 1)
+                }
+            }
+        }
+    '
+}
+
+strip_code_fence_filter() {
+    awk '
+        $0 ~ /^[[:space:]]*```/ { next }
+        { print }
+    '
+}
+
+strip_prompts_filter() {
+    sed -E \
+        -e 's/^[^[:space:]$#>]+@[^[:space:]]+:[^$#]*[$#][[:space:]]*//' \
+        -e 's/^[[:space:]]*[$#][[:space:]]+//' \
+        -e 's/^[[:space:]]*>[[:space:]]+//'
+}
+
+squeeze_blank_lines_filter() {
+    awk '
+        /^[[:space:]]*$/ {
+            if (!blank) print ""
+            blank = 1
+            next
+        }
+        {
+            blank = 0
+            print
+        }
+    '
+}
+
+slug_filter() {
+    local text
+    text=$(cat)
+    if command -v iconv >/dev/null 2>&1; then
+        text=$(printf '%s' "$text" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null || printf '%s' "$text")
+    fi
+    printf '%s' "$text" |
+        tr '[:upper:]' '[:lower:]' |
+        tr '\n' ' ' |
+        sed -E 's/[^a-z0-9]+/-/g; s/^-+//; s/-+$//; s/-+/-/g'
+}
+
+filename_safe_filter() {
+    local text
+    text=$(cat)
+    if command -v iconv >/dev/null 2>&1; then
+        text=$(printf '%s' "$text" | iconv -f UTF-8 -t ASCII//TRANSLIT 2>/dev/null || printf '%s' "$text")
+    fi
+    printf '%s' "$text" |
+        tr '\n' ' ' |
+        sed -E 's/[\/:*?"<>|]+/-/g; s/[[:space:]]+/_/g; s/[^A-Za-z0-9._-]+/-/g; s/[-_]{2,}/_/g; s/[-_]+\././g; s/^[-_.]+//; s/[-_.]+$//'
+}
+
+wrap_code_fence_filter() {
+    local lang="$1"
+
+    printf '```%s\n' "$lang"
+    cat
+    printf '\n```\n'
+}
+
 apply_text_filters() {
     local content="$1"
     local strip_numbers="$2"
     local join_spec="$3"
+    local trim_text="$4"
+    local dedent_text="$5"
+    local strip_fence="$6"
+    local strip_prompts="$7"
+    local squeeze_blanks="$8"
+    local make_slug="$9"
+    local make_filename="${10}"
+    local wrap_lang="${11}"
 
     if [[ "$strip_numbers" == "true" ]]; then
         content=$(printf '%s\n' "$content" | strip_line_numbers_filter)
     fi
 
+    if [[ "$strip_prompts" == "true" ]]; then
+        content=$(printf '%s\n' "$content" | strip_prompts_filter)
+    fi
+
+    if [[ "$strip_fence" == "true" ]]; then
+        content=$(printf '%s\n' "$content" | strip_code_fence_filter)
+    fi
+
+    if [[ "$dedent_text" == "true" ]]; then
+        content=$(printf '%s\n' "$content" | dedent_filter)
+    fi
+
     if [[ -n "$join_spec" ]]; then
         content=$(printf '%s\n' "$content" | join_lines_filter "$join_spec")
+    fi
+
+    if [[ "$squeeze_blanks" == "true" ]]; then
+        content=$(printf '%s\n' "$content" | squeeze_blank_lines_filter)
+    fi
+
+    if [[ "$trim_text" == "true" ]]; then
+        content=$(printf '%s\n' "$content" | trim_filter)
+    fi
+
+    if [[ "$make_slug" == "true" ]]; then
+        content=$(printf '%s\n' "$content" | slug_filter)
+    fi
+
+    if [[ "$make_filename" == "true" ]]; then
+        content=$(printf '%s\n' "$content" | filename_safe_filter)
+    fi
+
+    if [[ -n "$wrap_lang" ]]; then
+        content=$(printf '%s' "$content" | wrap_code_fence_filter "$wrap_lang")
     fi
 
     printf '%s' "$content"
@@ -276,6 +426,15 @@ main() {
     local no_emoji=false
     local strip_line_numbers=false
     local join_lines_spec=""
+    local stdout_output=false
+    local trim_text=false
+    local dedent_text=false
+    local strip_code_fence=false
+    local strip_prompts=false
+    local squeeze_blank_lines=false
+    local make_slug=false
+    local make_filename=false
+    local wrap_code_fence_lang=""
     local show_version=false
     local temp_file
     
@@ -344,6 +503,46 @@ main() {
                 fi
                 shift 2
                 ;;
+            --stdout)
+                stdout_output=true
+                shift
+                ;;
+            --trim)
+                trim_text=true
+                shift
+                ;;
+            --dedent)
+                dedent_text=true
+                shift
+                ;;
+            --strip-code-fence)
+                strip_code_fence=true
+                shift
+                ;;
+            --strip-prompts)
+                strip_prompts=true
+                shift
+                ;;
+            --squeeze-blank-lines)
+                squeeze_blank_lines=true
+                shift
+                ;;
+            --slug)
+                make_slug=true
+                to="text"
+                copy_only=true
+                shift
+                ;;
+            --filename-safe)
+                make_filename=true
+                to="text"
+                copy_only=true
+                shift
+                ;;
+            --wrap-code-fence)
+                wrap_code_fence_lang="$2"
+                shift 2
+                ;;
             --version)
                 show_version=true
                 shift
@@ -369,6 +568,15 @@ main() {
                 echo "  --no-emoji           Mostrar salida sobria, sin emojis"
                 echo "  --strip-line-numbers Eliminar numeracion de lineas copiada desde chats/IA"
                 echo "  --join-lines SPEC    Unir rangos: all, u3,7;9,14 o 3,7;9,14"
+                echo "  --stdout             Imprimir resultado final sin tocar portapapeles/editor"
+                echo "  --trim               Quitar bordes vacios y espacios finales"
+                echo "  --dedent             Quitar indentacion comun"
+                echo "  --strip-code-fence   Quitar fences Markdown de codigo"
+                echo "  --strip-prompts      Quitar prompts de terminal copiados"
+                echo "  --squeeze-blank-lines Colapsar lineas vacias repetidas"
+                echo "  --slug               Convertir texto a slug"
+                echo "  --filename-safe      Convertir texto a nombre de archivo seguro"
+                echo "  --wrap-code-fence LANG Envolver en fence Markdown"
                 echo "  --version            Mostrar version"
                 echo "  -h, --help           Mostrar esta ayuda"
                 echo ""
@@ -385,6 +593,8 @@ main() {
                 echo "  clipedit --plain                  # Texto plano directo al portapapeles"
                 echo "  clipedit --strip-line-numbers --plain"
                 echo "  clipedit --join-lines u3,7;9,14 --plain"
+                echo "  clipedit --strip-code-fence --dedent --stdout"
+                echo "  clipedit --wrap-code-fence bash --plain"
                 return 0
                 ;;
             *)
@@ -441,6 +651,10 @@ main() {
     if [[ "$peek" == "true" ]]; then
         peek_clipboard "$targets" "$from"
         return 0
+    fi
+
+    if [[ "$stdout_output" == "true" && "$to" == "edit" ]]; then
+        to="text"
     fi
 
     if [[ "$copy_only" == "true" && "$to" == "edit" ]]; then
@@ -509,7 +723,7 @@ main() {
     # Texto/HTML/RTF: procesar con pandoc
     local content
     content=$(get_clipboard_content "$from")
-    content=$(apply_text_filters "$content" "$strip_line_numbers" "$join_lines_spec")
+    content=$(apply_text_filters "$content" "$strip_line_numbers" "$join_lines_spec" "$trim_text" "$dedent_text" "$strip_code_fence" "$strip_prompts" "$squeeze_blank_lines" "$make_slug" "$make_filename" "$wrap_code_fence_lang")
     
     # Agregar source si corresponde
     if [[ -n "$source_url" ]]; then
@@ -596,10 +810,22 @@ $content"
     # Si hay output file o es modo conversión
     if [[ -n "$output_file" || "$to" != "edit" ]]; then
         # Siempre mostrar donde quedó el archivo temporal
-        if [[ -z "$output_file" && ( "$copy_only" != "true" || "$save_temp" == "true" ) ]]; then
+        if [[ -z "$output_file" && "$stdout_output" != "true" && ( "$copy_only" != "true" || "$save_temp" == "true" ) ]]; then
             echo "${icon_doc}Temporal: $temp_file"
         fi
         
+        if [[ "$stdout_output" == "true" ]]; then
+            cat "$temp_file"
+            if [[ -z "$output_file" ]]; then
+                if [[ "$save_temp" == "true" ]]; then
+                    echo "${icon_doc}Temporal conservado: $temp_file" >&2
+                else
+                    rm -f "$temp_file"
+                fi
+            fi
+            return 0
+        fi
+
         if [[ "$copy_only" == "true" ]]; then
             cat "$temp_file" | xclip -selection clipboard -i
             echo "${icon_ok}Copiado al clipboard"
