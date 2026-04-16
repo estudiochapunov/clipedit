@@ -29,6 +29,9 @@
 #   --slug               Convertir texto a slug
 #   --filename-safe      Convertir texto a nombre de archivo seguro
 #   --wrap-code-fence LANG Envolver en fence Markdown
+#   --dry-run            Mostrar plan y resultado sin tocar portapapeles/editor
+#   --grep PATTERN       Conservar solo lineas que matchean regex
+#   --grep-v PATTERN     Eliminar lineas que matchean regex
 #   --version            Mostrar version
 #   -h, --help           Mostrar ayuda
 #
@@ -36,7 +39,7 @@
 
 set -e
 
-VERSION="1.3.0"
+VERSION="1.4.0"
 
 # Función auxiliar: detectar editor default del sistema
 get_default_editor() {
@@ -324,6 +327,18 @@ squeeze_blank_lines_filter() {
     '
 }
 
+grep_filter() {
+    local pattern="$1"
+
+    grep -E -- "$pattern" || true
+}
+
+grep_v_filter() {
+    local pattern="$1"
+
+    grep -Ev -- "$pattern" || true
+}
+
 slug_filter() {
     local text
     text=$(cat)
@@ -367,6 +382,8 @@ apply_text_filters() {
     local make_slug="$9"
     local make_filename="${10}"
     local wrap_lang="${11}"
+    local grep_pattern="${12}"
+    local grep_v_pattern="${13}"
 
     if [[ "$strip_numbers" == "true" ]]; then
         content=$(printf '%s\n' "$content" | strip_line_numbers_filter)
@@ -382,6 +399,14 @@ apply_text_filters() {
 
     if [[ "$dedent_text" == "true" ]]; then
         content=$(printf '%s\n' "$content" | dedent_filter)
+    fi
+
+    if [[ -n "$grep_pattern" ]]; then
+        content=$(printf '%s\n' "$content" | grep_filter "$grep_pattern")
+    fi
+
+    if [[ -n "$grep_v_pattern" ]]; then
+        content=$(printf '%s\n' "$content" | grep_v_filter "$grep_v_pattern")
     fi
 
     if [[ -n "$join_spec" ]]; then
@@ -435,6 +460,9 @@ main() {
     local make_slug=false
     local make_filename=false
     local wrap_code_fence_lang=""
+    local dry_run=false
+    local grep_pattern=""
+    local grep_v_pattern=""
     local show_version=false
     local temp_file
     
@@ -543,6 +571,18 @@ main() {
                 wrap_code_fence_lang="$2"
                 shift 2
                 ;;
+            --dry-run)
+                dry_run=true
+                shift
+                ;;
+            --grep)
+                grep_pattern="$2"
+                shift 2
+                ;;
+            --grep-v)
+                grep_v_pattern="$2"
+                shift 2
+                ;;
             --version)
                 show_version=true
                 shift
@@ -577,6 +617,9 @@ main() {
                 echo "  --slug               Convertir texto a slug"
                 echo "  --filename-safe      Convertir texto a nombre de archivo seguro"
                 echo "  --wrap-code-fence LANG Envolver en fence Markdown"
+                echo "  --dry-run            Mostrar plan y resultado sin tocar portapapeles/editor"
+                echo "  --grep PATTERN       Conservar solo lineas que matchean regex"
+                echo "  --grep-v PATTERN     Eliminar lineas que matchean regex"
                 echo "  --version            Mostrar version"
                 echo "  -h, --help           Mostrar esta ayuda"
                 echo ""
@@ -595,6 +638,8 @@ main() {
                 echo "  clipedit --join-lines u3,7;9,14 --plain"
                 echo "  clipedit --strip-code-fence --dedent --stdout"
                 echo "  clipedit --wrap-code-fence bash --plain"
+                echo "  clipedit --grep ERROR --stdout"
+                echo "  clipedit --grep-v DEBUG --dry-run"
                 return 0
                 ;;
             *)
@@ -651,6 +696,10 @@ main() {
     if [[ "$peek" == "true" ]]; then
         peek_clipboard "$targets" "$from"
         return 0
+    fi
+
+    if [[ "$dry_run" == "true" && "$to" == "edit" ]]; then
+        to="text"
     fi
 
     if [[ "$stdout_output" == "true" && "$to" == "edit" ]]; then
@@ -723,7 +772,7 @@ main() {
     # Texto/HTML/RTF: procesar con pandoc
     local content
     content=$(get_clipboard_content "$from")
-    content=$(apply_text_filters "$content" "$strip_line_numbers" "$join_lines_spec" "$trim_text" "$dedent_text" "$strip_code_fence" "$strip_prompts" "$squeeze_blank_lines" "$make_slug" "$make_filename" "$wrap_code_fence_lang")
+    content=$(apply_text_filters "$content" "$strip_line_numbers" "$join_lines_spec" "$trim_text" "$dedent_text" "$strip_code_fence" "$strip_prompts" "$squeeze_blank_lines" "$make_slug" "$make_filename" "$wrap_code_fence_lang" "$grep_pattern" "$grep_v_pattern")
     
     # Agregar source si corresponde
     if [[ -n "$source_url" ]]; then
@@ -810,10 +859,42 @@ $content"
     # Si hay output file o es modo conversión
     if [[ -n "$output_file" || "$to" != "edit" ]]; then
         # Siempre mostrar donde quedó el archivo temporal
-        if [[ -z "$output_file" && "$stdout_output" != "true" && ( "$copy_only" != "true" || "$save_temp" == "true" ) ]]; then
+        if [[ -z "$output_file" && "$stdout_output" != "true" && "$dry_run" != "true" && ( "$copy_only" != "true" || "$save_temp" == "true" ) ]]; then
             echo "${icon_doc}Temporal: $temp_file"
         fi
         
+        if [[ "$dry_run" == "true" ]]; then
+            echo "ClipEdit dry-run"
+            echo "from=$from"
+            echo "to=$to"
+            echo "output=stdout"
+            echo "clipboard_write=false"
+            echo "editor=false"
+            echo "filters:"
+            [[ "$strip_line_numbers" == "true" ]] && echo "  - strip-line-numbers"
+            [[ -n "$join_lines_spec" ]] && echo "  - join-lines:$join_lines_spec"
+            [[ "$trim_text" == "true" ]] && echo "  - trim"
+            [[ "$dedent_text" == "true" ]] && echo "  - dedent"
+            [[ "$strip_code_fence" == "true" ]] && echo "  - strip-code-fence"
+            [[ "$strip_prompts" == "true" ]] && echo "  - strip-prompts"
+            [[ "$squeeze_blank_lines" == "true" ]] && echo "  - squeeze-blank-lines"
+            [[ "$make_slug" == "true" ]] && echo "  - slug"
+            [[ "$make_filename" == "true" ]] && echo "  - filename-safe"
+            [[ -n "$wrap_code_fence_lang" ]] && echo "  - wrap-code-fence:$wrap_code_fence_lang"
+            [[ -n "$grep_pattern" ]] && echo "  - grep:$grep_pattern"
+            [[ -n "$grep_v_pattern" ]] && echo "  - grep-v:$grep_v_pattern"
+            echo "---"
+            cat "$temp_file"
+            if [[ -z "$output_file" ]]; then
+                if [[ "$save_temp" == "true" ]]; then
+                    echo "${icon_doc}Temporal conservado: $temp_file" >&2
+                else
+                    rm -f "$temp_file"
+                fi
+            fi
+            return 0
+        fi
+
         if [[ "$stdout_output" == "true" ]]; then
             cat "$temp_file"
             if [[ -z "$output_file" ]]; then

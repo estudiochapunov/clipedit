@@ -81,6 +81,9 @@ clipedit [FLAGS]
 | `--slug` | Convert text to a lowercase URL/file slug | |
 | `--filename-safe` | Convert text to a filesystem-safe name | |
 | `--wrap-code-fence LANG` | Wrap content in a Markdown code fence | |
+| `--dry-run` | Show effective plan and final output without writing to clipboard or opening editor | |
+| `--grep PATTERN` | Keep only lines matching an extended regex | |
+| `--grep-v PATTERN` | Drop lines matching an extended regex | |
 | `--version` | Show ClipEdit version | |
 | `-h, --help` | Show help | |
 
@@ -164,6 +167,15 @@ clipedit --filename-safe
 
 # Wrap clipboard content as fenced bash code
 clipedit --wrap-code-fence bash --plain
+
+# Preview the exact transformation without touching clipboard
+clipedit --strip-prompts --grep '^git ' --dry-run
+
+# Keep only matching lines
+clipedit --grep 'ERROR|WARN' --plain
+
+# Drop matching lines
+clipedit --grep-v 'DEBUG|TRACE' --plain
 
 # Extract one raw clipboard target to stdout
 clipedit --target text/html
@@ -270,6 +282,13 @@ clipedit --filename-safe
 # Add or remove Markdown code fences
 clipedit --strip-code-fence --plain
 clipedit --wrap-code-fence bash --plain
+
+# Keep or remove lines with extended regex patterns
+clipedit --grep 'ERROR|WARN' --stdout
+clipedit --grep-v 'DEBUG|TRACE' --stdout
+
+# Inspect the effective plan plus final output
+clipedit --strip-line-numbers --join-lines u1,3 --dry-run
 ```
 
 ### Source URL (Chromium)
