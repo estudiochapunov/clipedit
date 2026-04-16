@@ -6,6 +6,7 @@ CLI tool to edit the clipboard and convert between formats.
 
 - ✨ **Unified command**: `clipedit` replaces all previous functions
 - 📋 **Auto-detection**: Detects clipboard format (HTML, RTF, text, images)
+- 🔎 **Clipboard inspection**: `--targets` and `--peek` for quick diagnostics
 - 🔄 **Flexible conversion**: Any → Markdown, HTML, text, PDF
 - 🖼️ **Image support**: Extracts images from clipboard and embeds them
 - 🔗 **Source tracking**: Adds source URL when available
@@ -20,6 +21,15 @@ cd clipedit
 chmod +x install.sh
 ./install.sh
 ```
+
+The installer creates a symlink instead of copying the script:
+
+```bash
+~/bin/clipedit -> ~/Repos/privado/clipedit/clipedit
+```
+
+This keeps a single versioned source of truth. Edits committed in the Git repo
+are immediately available through the global `clipedit` command.
 
 ## Dependencies
 
@@ -52,6 +62,17 @@ clipedit [FLAGS]
 | `-e, --editor` | Editor to use (default: system) | `-e vim` |
 | `-o, --output` | Output file | `-o ~/doc.md` |
 | `-s, --source` | Include source URL if exists | `-s` |
+| `--targets` | List available clipboard formats | |
+| `--peek` | Show clipboard diagnostics and a short preview | |
+| `--target TARGET` | Extract a raw X11 clipboard target | `--target text/html` |
+| `--plain` | Convert to plain text and copy without opening an editor | |
+| `--copy-only` | Convert and copy without opening an editor | |
+| `--no-edit` | Alias for `--copy-only` | |
+| `--save-temp` | Keep temporary files for inspection | |
+| `--no-emoji` | Use sober ClipEdit messages without emojis; clipboard content is not changed | |
+| `--strip-line-numbers` | Remove line numbers copied from AI chats, diffs or code viewers | |
+| `--join-lines SPEC` | Join line ranges into one line (`all`, `u3,7;9,14`, `3,7;9,14`) | |
+| `--version` | Show ClipEdit version | |
 | `-h, --help` | Show help | |
 
 ### Examples
@@ -80,6 +101,48 @@ clipedit -t pdf
 
 # Combine: specific editor + file + source
 clipedit -e vim -o ~/notas.txt -s
+
+# Inspect clipboard formats without changing anything
+clipedit --targets
+
+# Show detected type, source URL, size and a short preview
+clipedit --peek
+
+# Show version and repository
+clipedit --version
+
+# Copy plain text directly
+clipedit --plain
+
+# Convert to Markdown and copy directly, without opening the editor
+clipedit -t markdown --copy-only
+
+# Same behavior, alternate spelling
+clipedit -t markdown --no-edit
+
+# Keep the generated temporary file
+clipedit -t markdown --save-temp
+
+# Sober output, without emojis
+clipedit --peek --no-emoji
+
+# Remove copied line numbers and copy plain text
+clipedit --strip-line-numbers --plain
+
+# Join every line into one line
+clipedit --join-lines all --plain
+
+# Join only selected ranges, preserving the other lines
+clipedit --join-lines 'u3,7;9,14' --plain
+
+# Fix copied AI code: strip line numbers, then join lines 2 through 4
+clipedit --strip-line-numbers --join-lines u2,4 --plain
+
+# Extract one raw clipboard target to stdout
+clipedit --target text/html
+
+# Save one raw clipboard target to a file
+clipedit --target text/html -o ~/clip.html
 ```
 
 ### Backward-compatible aliases
@@ -120,12 +183,46 @@ ClipEdit uses TARGETS to:
 
 ```bash
 # See all available formats
-xclip -selection clipboard -t TARGETS -o
+clipedit --targets
 
 # See content in specific format
 xclip -selection clipboard -t text/html -o
 xclip -selection clipboard -t image/png -o > image.png
 ```
+
+For a more readable diagnostic, use:
+
+```bash
+clipedit --peek
+```
+
+To extract a specific target without conversion:
+
+```bash
+clipedit --target text/html
+clipedit --target chromium/x-source-url
+clipedit --target image/png -o ~/clip.png
+```
+
+## Cleanup filters for AI chat output
+
+AI chat apps sometimes copy code with line numbers, or wrap shell one-liners
+across several visual lines. ClipEdit includes two explicit filters for that:
+
+```bash
+# Remove leading line numbers such as "12 |", "12:", "12 +", or "12 "
+clipedit --strip-line-numbers --plain
+
+# Join all lines into a single line
+clipedit --join-lines all --plain
+
+# Join selected ranges only. The leading "u" is optional.
+clipedit --join-lines 'u3,7;9,14' --plain
+clipedit --join-lines '3,7;9,14' --plain
+```
+
+For selected ranges, lines outside the ranges are preserved. Joined lines are
+separated with one space.
 
 ### Source URL (Chromium)
 

@@ -39,12 +39,13 @@ fi
 # Crear directorio ~/bin si no existe
 mkdir -p ~/bin
 
-# 3. Copiar clipedit
+# 3. Instalar clipedit como symlink al repo
 echo "3. Instalando clipedit..."
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-cp "$SCRIPT_DIR/clipedit" ~/bin/clipedit
-chmod +x ~/bin/clipedit
-echo "   ✅ clipedit en ~/bin/clipedit"
+chmod +x "$SCRIPT_DIR/clipedit"
+rm -f ~/bin/clipedit
+ln -s "$SCRIPT_DIR/clipedit" ~/bin/clipedit
+echo "   ✅ clipedit en ~/bin/clipedit -> $SCRIPT_DIR/clipedit"
 
 # 4. Crear wrapper para atajos (compatibilidad)
 echo "4. Creando wrapper..."
