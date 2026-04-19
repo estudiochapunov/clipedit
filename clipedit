@@ -25,6 +25,9 @@
 #   --dedent             Quitar indentacion comun
 #   --strip-code-fence   Quitar fences Markdown de codigo
 #   --strip-prompts      Quitar prompts de terminal copiados
+#   --strip-wa-msgs      Quitar encabezados de mensajes copiados/exportados de WhatsApp
+#   --wa-keep CAMPOS     Preservar metadata de WhatsApp: name,date,time,datetime,all
+#   --wa-place LUGAR     Ubicar metadata preservada: prefix o suffix
 #   --squeeze-blank-lines Colapsar lineas vacias repetidas
 #   --slug               Convertir texto a slug
 #   --filename-safe      Convertir texto a nombre de archivo seguro
@@ -39,7 +42,7 @@
 
 set -e
 
-VERSION="1.4.0"
+VERSION="1.5.0"
 
 # Función auxiliar: detectar editor default del sistema
 get_default_editor() {
@@ -313,6 +316,73 @@ strip_prompts_filter() {
         -e 's/^[[:space:]]*>[[:space:]]+//'
 }
 
+strip_wa_msgs_filter() {
+    local keep="${1:-}"
+    local place="${2:-prefix}"
+
+    WA_KEEP="$keep" WA_PLACE="$place" perl -Mstrict -Mwarnings -CS -pe '
+        BEGIN {
+            my $raw_keep = $ENV{WA_KEEP} // "";
+            our @fields;
+            for my $field (split /,/, $raw_keep) {
+                $field =~ s/^\s+|\s+$//g;
+                next if $field eq "";
+                if ($field eq "all") {
+                    push @fields, qw(name date time);
+                } elsif ($field eq "datetime") {
+                    push @fields, qw(date time);
+                } elsif ($field =~ /^(name|date|time)$/) {
+                    push @fields, $field;
+                }
+            }
+            my %seen;
+            @fields = grep { !$seen{$_}++ } @fields;
+        }
+
+        sub clean_field {
+            my ($value) = @_;
+            $value //= "";
+            $value =~ s/[\x{200e}\x{200f}\x{202a}-\x{202e}]//g;
+            $value =~ s/^\s+|\s+$//g;
+            return $value;
+        }
+
+        sub render_message {
+            my ($name, $date, $time, $message) = @_;
+            our @fields;
+            return $message unless @fields;
+
+            my %value = (
+                name => clean_field($name),
+                date => clean_field($date),
+                time => clean_field($time),
+            );
+            my @parts = grep { $_ ne "" } map { $value{$_} } @fields;
+            return $message unless @parts;
+
+            my $tag = "[" . join(" ", @parts) . "]";
+            if (($ENV{WA_PLACE} // "prefix") eq "suffix") {
+                return "$message $tag";
+            }
+            return "$tag $message";
+        }
+
+        my $date = qr/\d{1,2}[.\/-]\d{1,2}[.\/-]\d{2,4}/;
+        my $time = qr/\d{1,2}:\d{2}(?::\d{2})?(?:\s?[AP]M)?/i;
+        chomp;
+
+        if (/^\[([^\]]*?)\s*($date)[,\s]+($time)[^\]]*\]:\s*(.*)$/i) {
+            $_ = render_message($1, $2, $3, $4) . "\n";
+        } elsif (/^\[($date),?\s+($time)[^\]]*\]\s+([^:]+):\s*(.*)$/i) {
+            $_ = render_message($3, $1, $2, $4) . "\n";
+        } elsif (/^($date),?\s+($time)\s+-\s+([^:]+):\s*(.*)$/i) {
+            $_ = render_message($3, $1, $2, $4) . "\n";
+        } else {
+            $_ .= "\n";
+        }
+    '
+}
+
 squeeze_blank_lines_filter() {
     awk '
         /^[[:space:]]*$/ {
@@ -384,6 +454,9 @@ apply_text_filters() {
     local wrap_lang="${11}"
     local grep_pattern="${12}"
     local grep_v_pattern="${13}"
+    local strip_wa_msgs="${14}"
+    local wa_keep="${15}"
+    local wa_place="${16}"
 
     if [[ "$strip_numbers" == "true" ]]; then
         content=$(printf '%s\n' "$content" | strip_line_numbers_filter)
@@ -391,6 +464,10 @@ apply_text_filters() {
 
     if [[ "$strip_prompts" == "true" ]]; then
         content=$(printf '%s\n' "$content" | strip_prompts_filter)
+    fi
+
+    if [[ "$strip_wa_msgs" == "true" ]]; then
+        content=$(printf '%s\n' "$content" | strip_wa_msgs_filter "$wa_keep" "$wa_place")
     fi
 
     if [[ "$strip_fence" == "true" ]]; then
@@ -456,6 +533,9 @@ main() {
     local dedent_text=false
     local strip_code_fence=false
     local strip_prompts=false
+    local strip_wa_msgs=false
+    local wa_keep=""
+    local wa_place="prefix"
     local squeeze_blank_lines=false
     local make_slug=false
     local make_filename=false
@@ -551,6 +631,20 @@ main() {
                 strip_prompts=true
                 shift
                 ;;
+            --strip-wa-msgs)
+                strip_wa_msgs=true
+                shift
+                ;;
+            --wa-keep)
+                strip_wa_msgs=true
+                wa_keep="$2"
+                shift 2
+                ;;
+            --wa-place)
+                strip_wa_msgs=true
+                wa_place="$2"
+                shift 2
+                ;;
             --squeeze-blank-lines)
                 squeeze_blank_lines=true
                 shift
@@ -613,6 +707,9 @@ main() {
                 echo "  --dedent             Quitar indentacion comun"
                 echo "  --strip-code-fence   Quitar fences Markdown de codigo"
                 echo "  --strip-prompts      Quitar prompts de terminal copiados"
+                echo "  --strip-wa-msgs      Quitar encabezados de mensajes copiados/exportados de WhatsApp"
+                echo "  --wa-keep CAMPOS     Preservar metadata WA: name,date,time,datetime,all"
+                echo "  --wa-place LUGAR     Ubicar metadata WA preservada: prefix o suffix"
                 echo "  --squeeze-blank-lines Colapsar lineas vacias repetidas"
                 echo "  --slug               Convertir texto a slug"
                 echo "  --filename-safe      Convertir texto a nombre de archivo seguro"
@@ -640,6 +737,8 @@ main() {
                 echo "  clipedit --wrap-code-fence bash --plain"
                 echo "  clipedit --grep ERROR --stdout"
                 echo "  clipedit --grep-v DEBUG --dry-run"
+                echo "  clipedit --strip-wa-msgs --plain"
+                echo "  clipedit --strip-wa-msgs --wa-keep name,date --wa-place suffix --stdout"
                 return 0
                 ;;
             *)
@@ -652,6 +751,18 @@ main() {
         echo "clipedit $VERSION"
         echo "repo: https://github.com/estudiochapunov/clipedit"
         return 0
+    fi
+
+    wa_keep=$(printf '%s' "$wa_keep" | tr -d '[:space:]')
+
+    if [[ "$wa_place" != "prefix" && "$wa_place" != "suffix" ]]; then
+        echo "Error: --wa-place acepta solo prefix o suffix" >&2
+        return 1
+    fi
+
+    if [[ -n "$wa_keep" && ! "$wa_keep" =~ ^(name|date|time|datetime|all)(,(name|date|time|datetime|all))*$ ]]; then
+        echo "Error: --wa-keep acepta name,date,time,datetime,all o listas separadas por coma" >&2
+        return 1
     fi
 
     local icon_image="📷 "
@@ -772,7 +883,7 @@ main() {
     # Texto/HTML/RTF: procesar con pandoc
     local content
     content=$(get_clipboard_content "$from")
-    content=$(apply_text_filters "$content" "$strip_line_numbers" "$join_lines_spec" "$trim_text" "$dedent_text" "$strip_code_fence" "$strip_prompts" "$squeeze_blank_lines" "$make_slug" "$make_filename" "$wrap_code_fence_lang" "$grep_pattern" "$grep_v_pattern")
+    content=$(apply_text_filters "$content" "$strip_line_numbers" "$join_lines_spec" "$trim_text" "$dedent_text" "$strip_code_fence" "$strip_prompts" "$squeeze_blank_lines" "$make_slug" "$make_filename" "$wrap_code_fence_lang" "$grep_pattern" "$grep_v_pattern" "$strip_wa_msgs" "$wa_keep" "$wa_place")
     
     # Agregar source si corresponde
     if [[ -n "$source_url" ]]; then
@@ -877,6 +988,9 @@ $content"
             [[ "$dedent_text" == "true" ]] && echo "  - dedent"
             [[ "$strip_code_fence" == "true" ]] && echo "  - strip-code-fence"
             [[ "$strip_prompts" == "true" ]] && echo "  - strip-prompts"
+            [[ "$strip_wa_msgs" == "true" ]] && echo "  - strip-wa-msgs"
+            [[ -n "$wa_keep" ]] && echo "  - wa-keep:$wa_keep"
+            [[ "$strip_wa_msgs" == "true" && -n "$wa_keep" ]] && echo "  - wa-place:$wa_place"
             [[ "$squeeze_blank_lines" == "true" ]] && echo "  - squeeze-blank-lines"
             [[ "$make_slug" == "true" ]] && echo "  - slug"
             [[ "$make_filename" == "true" ]] && echo "  - filename-safe"

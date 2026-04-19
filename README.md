@@ -10,6 +10,7 @@ CLI tool to edit the clipboard and convert between formats.
 - 🔄 **Flexible conversion**: Any → Markdown, HTML, text, PDF
 - 🖼️ **Image support**: Extracts images from clipboard and embeds them
 - 🔗 **Source tracking**: Adds source URL when available
+- 🧹 **Cleanup filters**: Fixes copied AI code, terminal prompts, Markdown fences and WhatsApp message headers
 - ⌨️ **Dynamic editor**: Uses system default editor
 - 📦 **Compatible**: MATE, GNOME, KDE, XFCE, etc.
 
@@ -25,7 +26,7 @@ chmod +x install.sh
 The installer creates a symlink instead of copying the script:
 
 ```bash
-~/bin/clipedit -> ~/Repos/privado/clipedit/clipedit
+~/bin/clipedit -> /path/to/your/clipedit/clipedit
 ```
 
 This keeps a single versioned source of truth. Edits committed in the Git repo
@@ -35,13 +36,14 @@ are immediately available through the global `clipedit` command.
 
 Install manually:
 ```bash
-sudo apt install xclip xdg-utils pandoc wkhtmltopdf
+sudo apt install xclip xdg-utils perl pandoc wkhtmltopdf
 ```
 
 | Package | Description |
 |---------|-------------|
 | `xclip` | Clipboard access |
 | `xdg-mime` | Detect default editor (xdg-utils) |
+| `perl` | WhatsApp header parser for `--strip-wa-msgs` |
 | `pandoc` | Format conversion |
 | `wkhtmltopdf` | HTML → PDF (optional) |
 
@@ -77,6 +79,9 @@ clipedit [FLAGS]
 | `--dedent` | Remove common indentation | |
 | `--strip-code-fence` | Remove Markdown code fences | |
 | `--strip-prompts` | Remove copied shell prompts | |
+| `--strip-wa-msgs` | Remove WhatsApp sender/date/time headers from copied or exported messages | |
+| `--wa-keep FIELDS` | Preserve WhatsApp metadata fields (`name`, `date`, `time`, `datetime`, `all`) | `--wa-keep name,date` |
+| `--wa-place PLACE` | Place preserved WhatsApp metadata at `prefix` or `suffix` | `--wa-place suffix` |
 | `--squeeze-blank-lines` | Collapse repeated blank lines | |
 | `--slug` | Convert text to a lowercase URL/file slug | |
 | `--filename-safe` | Convert text to a filesystem-safe name | |
@@ -155,6 +160,9 @@ clipedit --strip-code-fence --dedent --stdout
 
 # Remove shell prompts from copied terminal snippets
 clipedit --strip-prompts --plain
+
+# Remove WhatsApp sender/date/time headers from copied messages
+clipedit --strip-wa-msgs --plain
 
 # Trim, dedent, and collapse repeated blank lines
 clipedit --trim --dedent --squeeze-blank-lines --plain
@@ -272,6 +280,11 @@ clipedit --strip-code-fence --dedent --stdout
 # Turn copied shell sessions into reusable commands
 clipedit --strip-prompts --plain
 
+# Remove WhatsApp multi-message headers
+clipedit --strip-wa-msgs --plain
+clipedit --strip-wa-msgs --wa-keep name,date --stdout
+clipedit --strip-wa-msgs --wa-keep datetime --wa-place suffix --stdout
+
 # Normalize whitespace
 clipedit --trim --squeeze-blank-lines --plain
 
@@ -290,6 +303,69 @@ clipedit --grep-v 'DEBUG|TRACE' --stdout
 # Inspect the effective plan plus final output
 clipedit --strip-line-numbers --join-lines u1,3 --dry-run
 ```
+
+## WhatsApp cleanup
+
+When copying multiple WhatsApp messages or working with exported chats, WhatsApp
+may prepend each message with sender and timestamp metadata. The exact format
+depends on app, platform, and locale. ClipEdit handles common variants:
+
+```text
+[Gabriel 12/04/2026 17:03:23]: Mi mensaje
+[15.11.16, 16:13:29] Person A: Hello
+1/15/25, 10:35 AM - John: Great
+```
+
+To remove those headers:
+
+```bash
+clipedit --strip-wa-msgs --plain
+clipedit --strip-wa-msgs --stdout
+clipedit --strip-wa-msgs --dry-run
+```
+
+By default, `--strip-wa-msgs` removes all WhatsApp metadata and keeps only the
+message body. If metadata is useful, preserve selected fields:
+
+```bash
+# Keep sender only
+clipedit --strip-wa-msgs --wa-keep name --plain
+
+# Keep sender and date before each message
+clipedit --strip-wa-msgs --wa-keep name,date --plain
+
+# Keep date/time after each message
+clipedit --strip-wa-msgs --wa-keep datetime --wa-place suffix --stdout
+
+# Keep sender, date and time
+clipedit --strip-wa-msgs --wa-keep all --stdout
+```
+
+Preserved metadata is normalized into a compact tag:
+
+```text
+[Gabriel 12/04/2026 17:03:23] Mi mensaje
+Mi mensaje [12/04/2026 17:03:23]
+```
+
+The filter is conservative: it only removes line-start headers that contain a
+date and time pattern.
+
+### Implementation notes
+
+The WhatsApp parser is intentionally conservative and line-oriented. It handles
+three common header families:
+
+```text
+[Name DD/MM/YYYY HH:MM:SS]: Message
+[DD.MM.YY, HH:MM:SS] Name: Message
+MM/DD/YY, HH:MM AM - Name: Message
+```
+
+It requires both date and time before stripping anything. Lines that do not
+look like WhatsApp metadata are preserved unchanged, which makes the filter
+safe to combine with `--dry-run`, `--stdout`, `--plain`, `--grep`,
+`--strip-prompts`, `--trim` and the other text filters.
 
 ### Source URL (Chromium)
 

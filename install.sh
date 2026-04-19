@@ -9,7 +9,7 @@ echo "=== ClipEdit Installation ==="
 # 1. Verificar dependencias
 echo "1. Verificando dependencias..."
 MISSING=()
-for cmd in xclip xdg-mime; do
+for cmd in xclip xdg-mime perl; do
     if ! command -v $cmd &>/dev/null; then
         MISSING+=("$cmd")
     fi
@@ -25,7 +25,7 @@ fi
 
 if [ ${#MISSING[@]} -gt 0 ]; then
     echo "   ❌ Faltan dependencias: ${MISSING[*]}"
-    echo "   Instalalas con: sudo apt install xclip xdg-utils pandoc wkhtmltopdf"
+    echo "   Instalalas con: sudo apt install xclip xdg-utils perl pandoc wkhtmltopdf"
     exit 1
 fi
 echo "   ✅ Dependencias ok"
