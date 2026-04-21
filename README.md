@@ -64,6 +64,13 @@ clipedit [FLAGS]
 | `-e, --editor` | Editor to use (default: system) | `-e vim` |
 | `-o, --output` | Output file | `-o ~/doc.md` |
 | `-s, --source` | Include source URL if exists | `-s` |
+| `--input-selection SEL` | Read from X11 selection (`clipboard`, `primary`) | `--in-sel primary` |
+| `--in-sel SEL` | Alias for `--input-selection` | |
+| `--output-selection SEL` | Write to X11 selection (`clipboard`, `primary`, `both`) | `--out-sel both` |
+| `--out-sel SEL` | Alias for `--output-selection` | |
+| `--in-clip` / `--in-primary` | Read from CLIPBOARD or PRIMARY | |
+| `--out-clip` / `--out-primary` | Write to CLIPBOARD or PRIMARY | |
+| `--both-sel` | Write to both CLIPBOARD and PRIMARY | |
 | `--targets` | List available clipboard formats | |
 | `--peek` | Show clipboard diagnostics and a short preview | |
 | `--target TARGET` | Extract a raw X11 clipboard target | `--target text/html` |
@@ -143,6 +150,12 @@ clipedit -t markdown --save-temp
 # Sober output, without emojis
 clipedit --peek --no-emoji
 
+# Read from CLIPBOARD, then write the result to both CLIPBOARD and PRIMARY
+clipedit -e vim --both-sel
+
+# Read from PRIMARY and write to CLIPBOARD
+clipedit --in-primary --out-clip --plain
+
 # Remove copied line numbers and copy plain text
 clipedit --strip-line-numbers --plain
 
@@ -195,19 +208,19 @@ clipedit --target text/html -o ~/clip.html
 ### Editor workflow
 
 When ClipEdit opens an editor, it works on a temporary file. To send edits back
-to the clipboard:
+to the configured X11 output selection:
 
 1. Edit the content.
 2. Save the same temporary file in the editor.
 3. Close the editor.
-4. Confirm the ClipEdit prompt to copy the saved temporary file to the clipboard.
+4. Confirm the ClipEdit prompt to copy the saved temporary file.
 
 Using "Save as" in another path does not change the temporary file that ClipEdit
 will copy. ClipEdit reports whether it detected saved changes before asking:
 
 ```text
 Cambios guardados detectados.
-¿Copiar al clipboard el contenido guardado del archivo temporal? (s/n)
+¿Copiar a CLIPBOARD y PRIMARY el contenido guardado del archivo temporal? (s/n)
 ```
 
 ### Backward-compatible aliases
@@ -217,6 +230,35 @@ clip-edit-text    # clipedit -f text -e
 clip-edit-html    # clipedit -f html -e  
 clip2md           # clipedit -t markdown
 clip-to-markdown  # clipedit -t markdown
+```
+
+## X11 Selections
+
+X11 has more than one text selection:
+
+| Selection | Typical use |
+|-----------|-------------|
+| `CLIPBOARD` | Explicit copy/paste, usually `Ctrl+C` / `Ctrl+V` in GUI apps |
+| `PRIMARY` | Mouse selection and middle-click paste; some terminal bindings may use it |
+
+ClipEdit reads from and writes to `CLIPBOARD` by default. To control this:
+
+```bash
+# Read from CLIPBOARD, write to both selections
+clipedit -e vim --both-sel
+
+# Read from PRIMARY, write to CLIPBOARD
+clipedit --in-primary --out-clip --plain
+
+# Fully explicit form
+clipedit --input-selection primary --output-selection both --plain
+```
+
+To inspect selections manually:
+
+```bash
+xclip -selection clipboard -o
+xclip -selection primary -o
 ```
 
 ## Understanding TARGETS

@@ -10,6 +10,8 @@
 #   -e, --editor EDITOR  Editor a usar (default: sistema)
 #   -o, --output ARCHIVO Archivo de salida (default: portapapeles/clipboard)
 #   -s, --source         Incluir URL de origen (solo si existe)
+#   --input-selection SEL Leer desde seleccion X11 (clipboard, primary)
+#   --output-selection SEL Escribir a seleccion X11 (clipboard, primary, both)
 #   --targets            Listar formatos disponibles en el portapapeles
 #   --peek               Mostrar diagnostico breve del portapapeles
 #   --target TARGET      Extraer un target X11 especifico
@@ -42,7 +44,7 @@
 
 set -e
 
-VERSION="1.5.0"
+VERSION="1.6.0"
 
 # Función auxiliar: detectar editor default del sistema
 get_default_editor() {
@@ -72,11 +74,11 @@ open_editor_for_clipboard_review() {
     echo "${icon_edit}Abriendo en $editor..."
     echo "Archivo temporal: $file"
     echo ""
-    echo "Para aplicar cambios al clipboard:"
+    echo "Para aplicar cambios a la seleccion X11 de salida:"
     echo "  1. Edita el contenido en el editor."
     echo "  2. Guarda este mismo archivo temporal."
     echo "  3. Cierra el editor."
-    echo "  4. ClipEdit te preguntara si queres copiar el resultado al clipboard."
+    echo "  4. ClipEdit te preguntara si queres copiar el resultado."
     echo ""
     echo "Nota: Guardar como en otra ruta no cambia el archivo temporal que ClipEdit copiara."
     echo ""
@@ -91,20 +93,67 @@ open_editor_for_clipboard_review() {
     fi
 }
 
+selection_label() {
+    case "$1" in
+        clipboard) echo "CLIPBOARD" ;;
+        primary) echo "PRIMARY" ;;
+        both) echo "CLIPBOARD y PRIMARY" ;;
+        *) echo "$1" ;;
+    esac
+}
+
+read_x11_selection() {
+    local selection="$1"
+    local target="${2:-}"
+
+    if [[ -n "$target" ]]; then
+        xclip -selection "$selection" -t "$target" -o 2>/dev/null
+    else
+        xclip -selection "$selection" -o 2>/dev/null
+    fi
+}
+
+copy_file_to_x11_selection() {
+    local file="$1"
+    local selection="$2"
+
+    case "$selection" in
+        clipboard)
+            xclip -selection clipboard -i < "$file"
+            ;;
+        primary)
+            xclip -selection primary -i < "$file"
+            ;;
+        both)
+            xclip -selection clipboard -i < "$file"
+            xclip -selection primary -i < "$file"
+            ;;
+    esac
+}
+
 # Función auxiliar: obtener source URL si el target existe
 get_source_url() {
     local targets="$1"
+    local input_selection="$2"
 
     if ! echo "$targets" | grep -qx "chromium/x-source-url"; then
         return 0
     fi
 
-    xclip -selection clipboard -t chromium/x-source-url -o 2>/dev/null || true
+    read_x11_selection "$input_selection" "chromium/x-source-url" || true
 }
 
 # Función auxiliar: obtener formatos disponibles en portapapeles
 get_targets() {
-    xclip -selection clipboard -t TARGETS -o 2>/dev/null || echo "text/plain"
+    local input_selection="$1"
+    local targets
+
+    targets=$(read_x11_selection "$input_selection" "TARGETS" 2>/dev/null || true)
+    if [[ -n "$targets" ]]; then
+        echo "$targets"
+    else
+        echo "text/plain"
+    fi
 }
 
 print_targets() {
@@ -147,19 +196,20 @@ get_image_ext() {
 
 get_clipboard_content() {
     local from="$1"
+    local input_selection="$2"
 
     case "$from" in
         html)
-            xclip -selection clipboard -t text/html -o 2>/dev/null || true
+            read_x11_selection "$input_selection" "text/html" || true
             ;;
         rtf)
-            xclip -selection clipboard -t text/rtf -o 2>/dev/null || true
+            read_x11_selection "$input_selection" "text/rtf" || true
             ;;
         markdown)
-            xclip -selection clipboard -t text/markdown -o 2>/dev/null || true
+            read_x11_selection "$input_selection" "text/markdown" || true
             ;;
         *)
-            xclip -selection clipboard -o 2>/dev/null || true
+            read_x11_selection "$input_selection" || true
             ;;
     esac
 }
@@ -167,11 +217,13 @@ get_clipboard_content() {
 peek_clipboard() {
     local targets="$1"
     local from="$2"
+    local input_selection="$3"
     local source_url
 
-    source_url=$(get_source_url "$targets")
+    source_url=$(get_source_url "$targets" "$input_selection")
 
     echo "ClipEdit peek"
+    echo "Seleccion X11 de entrada: $(selection_label "$input_selection")"
     echo "Tipo detectado: $from"
     if [[ -n "$source_url" ]]; then
         echo "Source URL: $source_url"
@@ -192,7 +244,7 @@ peek_clipboard() {
             *) img_target="image/$img_ext" ;;
         esac
 
-        byte_count=$(xclip -selection clipboard -t "$img_target" -o 2>/dev/null | wc -c | tr -d ' ')
+        byte_count=$(read_x11_selection "$input_selection" "$img_target" | wc -c | tr -d ' ')
         echo ""
         echo "Imagen: $img_target"
         echo "Tamano aproximado: ${byte_count:-0} bytes"
@@ -200,7 +252,7 @@ peek_clipboard() {
     fi
 
     local content
-    content=$(get_clipboard_content "$from")
+    content=$(get_clipboard_content "$from" "$input_selection")
     local line_count
     if [[ -n "$content" ]]; then
         line_count=$(printf '%s\n' "$content" | wc -l | tr -d ' ')
@@ -551,6 +603,8 @@ main() {
     local editor=""
     local output_file=""
     local include_source=false
+    local input_selection="clipboard"
+    local output_selection="clipboard"
     local show_targets=false
     local peek=false
     local raw_target=""
@@ -598,6 +652,34 @@ main() {
                 ;;
             -s|--source)
                 include_source=true
+                shift
+                ;;
+            --input-selection|--in-sel)
+                input_selection="$2"
+                shift 2
+                ;;
+            --output-selection|--out-sel)
+                output_selection="$2"
+                shift 2
+                ;;
+            --in-clip)
+                input_selection="clipboard"
+                shift
+                ;;
+            --in-primary)
+                input_selection="primary"
+                shift
+                ;;
+            --out-clip)
+                output_selection="clipboard"
+                shift
+                ;;
+            --out-primary)
+                output_selection="primary"
+                shift
+                ;;
+            --both-sel)
+                output_selection="both"
                 shift
                 ;;
             --targets)
@@ -723,6 +805,15 @@ main() {
                 echo "  -e, --editor EDITOR  Editor a usar (default: sistema)"
                 echo "  -o, --output ARCHIVO Archivo de salida"
                 echo "  -s, --source         Incluir URL de origen si existe"
+                echo "  --input-selection SEL Leer desde seleccion X11: clipboard o primary"
+                echo "  --in-sel SEL         Alias de --input-selection"
+                echo "  --output-selection SEL Escribir a seleccion X11: clipboard, primary o both"
+                echo "  --out-sel SEL        Alias de --output-selection"
+                echo "  --in-clip            Leer desde CLIPBOARD (default)"
+                echo "  --in-primary         Leer desde PRIMARY"
+                echo "  --out-clip           Escribir a CLIPBOARD (default)"
+                echo "  --out-primary        Escribir a PRIMARY"
+                echo "  --both-sel           Escribir a CLIPBOARD y PRIMARY"
                 echo "  --targets            Listar formatos disponibles en el portapapeles"
                 echo "  --peek               Mostrar diagnostico breve del portapapeles"
                 echo "  --target TARGET      Extraer un target X11 especifico"
@@ -762,6 +853,8 @@ main() {
                 echo "  clipedit --peek                   # Diagnosticar contenido actual"
                 echo "  clipedit --target text/html       # Extraer HTML crudo"
                 echo "  clipedit --plain                  # Texto plano directo al portapapeles"
+                echo "  clipedit -e vim --both-sel        # Editar y escribir en CLIPBOARD + PRIMARY"
+                echo "  clipedit --in-primary --out-clip --plain"
                 echo "  clipedit --strip-line-numbers --plain"
                 echo "  clipedit --join-lines u3,7;9,14 --plain"
                 echo "  clipedit --strip-code-fence --dedent --stdout"
@@ -796,6 +889,16 @@ main() {
         return 1
     fi
 
+    if [[ "$input_selection" != "clipboard" && "$input_selection" != "primary" ]]; then
+        echo "Error: --input-selection acepta solo clipboard o primary" >&2
+        return 1
+    fi
+
+    if [[ "$output_selection" != "clipboard" && "$output_selection" != "primary" && "$output_selection" != "both" ]]; then
+        echo "Error: --output-selection acepta solo clipboard, primary o both" >&2
+        return 1
+    fi
+
     local icon_image="📷 "
     local icon_doc="📄 "
     local icon_warn="⚠️ "
@@ -813,14 +916,14 @@ main() {
     
     # Obtener targets del portapapeles
     local targets
-    targets=$(get_targets)
+    targets=$(get_targets "$input_selection")
 
     if [[ -n "$raw_target" ]]; then
         if [[ -n "$output_file" ]]; then
-            xclip -selection clipboard -t "$raw_target" -o > "$output_file"
+            read_x11_selection "$input_selection" "$raw_target" > "$output_file"
             echo "${icon_doc}Guardado: $output_file"
         else
-            xclip -selection clipboard -t "$raw_target" -o
+            read_x11_selection "$input_selection" "$raw_target"
         fi
         return 0
     fi
@@ -836,7 +939,7 @@ main() {
     fi
 
     if [[ "$peek" == "true" ]]; then
-        peek_clipboard "$targets" "$from"
+        peek_clipboard "$targets" "$from" "$input_selection"
         return 0
     fi
 
@@ -868,7 +971,7 @@ main() {
     # Procesar según tipo de contenido
     local source_url=""
     if [[ "$include_source" == "true" ]]; then
-        source_url=$(get_source_url "$targets")
+        source_url=$(get_source_url "$targets" "$input_selection")
     fi
     
     # Imagen: extraer y guardar
@@ -879,8 +982,8 @@ main() {
         img_file=$(mktemp /tmp/clipimg-XXXXXX.${img_ext})
         
         # Extraer imagen
-        xclip -selection clipboard -t "image/${img_ext}" -o > "$img_file" 2>/dev/null || \
-        xclip -selection clipboard -o > "$img_file"
+        read_x11_selection "$input_selection" "image/${img_ext}" > "$img_file" 2>/dev/null || \
+        read_x11_selection "$input_selection" > "$img_file"
         
         echo "${icon_image}Imagen guardada: $img_file"
         
@@ -901,7 +1004,7 @@ main() {
             echo "${icon_doc}$temp_file"
         else
             # Copiar al portapapeles
-            cat "$temp_file" | xclip -selection clipboard -i
+            copy_file_to_x11_selection "$temp_file" "$output_selection"
             if [[ "$save_temp" == "true" ]]; then
                 echo "${icon_doc}Temporal: $temp_file"
             else
@@ -913,7 +1016,7 @@ main() {
     
     # Texto/HTML/RTF: procesar con pandoc
     local content
-    content=$(get_clipboard_content "$from")
+    content=$(get_clipboard_content "$from" "$input_selection")
     content=$(apply_text_filters "$content" "$strip_line_numbers" "$join_lines_spec" "$trim_text" "$dedent_text" "$strip_code_fence" "$strip_prompts" "$squeeze_blank_lines" "$make_slug" "$make_filename" "$wrap_code_fence_lang" "$grep_pattern" "$grep_v_pattern" "$strip_wa_msgs" "$wa_keep" "$wa_place")
     
     # Agregar source si corresponde
@@ -979,11 +1082,11 @@ $content"
             
             # Si es archivo temporal, preguntar si copiar de vuelta
             if [[ -z "$output_file" ]]; then
-                echo "${icon_clip}¿Copiar al clipboard el contenido guardado del archivo temporal? (s/n)"
+                echo "${icon_clip}¿Copiar a $(selection_label "$output_selection") el contenido guardado del archivo temporal? (s/n)"
                 read -r resp
                 if [[ "$resp" == "s" || "$resp" == "S" ]]; then
-                    cat "$temp_file" | xclip -selection clipboard -i
-                    echo "${icon_ok}Copiado al clipboard"
+                    copy_file_to_x11_selection "$temp_file" "$output_selection"
+                    echo "${icon_ok}Copiado a $(selection_label "$output_selection")"
                 fi
                 if [[ "$save_temp" == "true" ]]; then
                     echo "${icon_doc}Temporal conservado: $temp_file"
@@ -1009,6 +1112,8 @@ $content"
             echo "from=$from"
             echo "to=$to"
             echo "output=stdout"
+            echo "input_selection=$input_selection"
+            echo "output_selection=$output_selection"
             echo "clipboard_write=false"
             echo "editor=false"
             echo "filters:"
@@ -1052,8 +1157,8 @@ $content"
         fi
 
         if [[ "$copy_only" == "true" ]]; then
-            cat "$temp_file" | xclip -selection clipboard -i
-            echo "${icon_ok}Copiado al clipboard"
+            copy_file_to_x11_selection "$temp_file" "$output_selection"
+            echo "${icon_ok}Copiado a $(selection_label "$output_selection")"
             if [[ -z "$output_file" ]]; then
                 if [[ "$save_temp" == "true" ]]; then
                     echo "${icon_doc}Temporal conservado: $temp_file"
@@ -1072,11 +1177,11 @@ $content"
             open_editor_for_clipboard_review "$editor" "$temp_file" "$icon_edit"
             
             # Preguntar si copiar al portapapeles
-            echo "${icon_clip}¿Copiar al clipboard el contenido guardado del archivo temporal? (s/n)"
+            echo "${icon_clip}¿Copiar a $(selection_label "$output_selection") el contenido guardado del archivo temporal? (s/n)"
             read -r resp
             if [[ "$resp" == "s" || "$resp" == "S" ]]; then
-                cat "$temp_file" | xclip -selection clipboard -i
-                echo "${icon_ok}Copiado al clipboard"
+                copy_file_to_x11_selection "$temp_file" "$output_selection"
+                echo "${icon_ok}Copiado a $(selection_label "$output_selection")"
             fi
             if [[ "$save_temp" == "true" ]]; then
                 echo "${icon_doc}Temporal conservado: $temp_file"
@@ -1084,7 +1189,7 @@ $content"
                 rm -f "$temp_file"
             fi
         else
-            cat "$temp_file" | xclip -selection clipboard -i
+            copy_file_to_x11_selection "$temp_file" "$output_selection"
             echo "${icon_doc}Guardado: $temp_file"
         fi
     fi

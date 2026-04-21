@@ -120,6 +120,21 @@ assert_eq \
     "$(run_filter "echo hola" wrap_code_fence_filter bash)"
 
 assert_eq \
+    "selection-label names clipboard" \
+    "CLIPBOARD" \
+    "$(selection_label clipboard)"
+
+assert_eq \
+    "selection-label names primary" \
+    "PRIMARY" \
+    "$(selection_label primary)"
+
+assert_eq \
+    "selection-label names both" \
+    "CLIPBOARD y PRIMARY" \
+    "$(selection_label both)"
+
+assert_eq \
     "apply_text_filters composes filters in current order" \
     "echo uno && echo dos" \
     "$(apply_text_filters $'1 | ```bash\n2 | echo uno\n3 | && echo dos\n4 | ```' true all true true true false false false false "" "" "" false "" "")"
