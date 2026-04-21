@@ -192,6 +192,24 @@ clipedit --target text/html
 clipedit --target text/html -o ~/clip.html
 ```
 
+### Editor workflow
+
+When ClipEdit opens an editor, it works on a temporary file. To send edits back
+to the clipboard:
+
+1. Edit the content.
+2. Save the same temporary file in the editor.
+3. Close the editor.
+4. Confirm the ClipEdit prompt to copy the saved temporary file to the clipboard.
+
+Using "Save as" in another path does not change the temporary file that ClipEdit
+will copy. ClipEdit reports whether it detected saved changes before asking:
+
+```text
+Cambios guardados detectados.
+¿Copiar al clipboard el contenido guardado del archivo temporal? (s/n)
+```
+
 ### Backward-compatible aliases
 
 ```bash
@@ -399,6 +417,22 @@ rm ~/bin/clipedit ~/bin/clip-wrapper
 dconf write /org/mate/marco/global-keybindings/custom-keybindings "[]"
 # Remove functions from ~/.bashrc (search for "clipedit" or "ClipEdit")
 ```
+
+## Development Checks
+
+Run syntax checks and the filter regression suite before refactoring or adding
+flags:
+
+```bash
+bash -n clipedit
+bash -n install.sh
+./tests/run_filters.sh
+```
+
+`tests/run_filters.sh` loads ClipEdit functions without running `main`, so it
+does not require clipboard access. It freezes the current text-filter contract
+for cleanup, WhatsApp headers, grep filters, slugs, filename-safe output and
+Markdown fences.
 
 ## FAQ
 

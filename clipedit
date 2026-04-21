@@ -60,6 +60,37 @@ get_default_editor() {
     return 0
 }
 
+open_editor_for_clipboard_review() {
+    local editor="$1"
+    local file="$2"
+    local icon_edit="$3"
+    local before
+    local after
+
+    before=$(cksum "$file" 2>/dev/null || true)
+
+    echo "${icon_edit}Abriendo en $editor..."
+    echo "Archivo temporal: $file"
+    echo ""
+    echo "Para aplicar cambios al clipboard:"
+    echo "  1. Edita el contenido en el editor."
+    echo "  2. Guarda este mismo archivo temporal."
+    echo "  3. Cierra el editor."
+    echo "  4. ClipEdit te preguntara si queres copiar el resultado al clipboard."
+    echo ""
+    echo "Nota: Guardar como en otra ruta no cambia el archivo temporal que ClipEdit copiara."
+    echo ""
+
+    "$editor" "$file"
+
+    after=$(cksum "$file" 2>/dev/null || true)
+    if [[ "$before" != "$after" ]]; then
+        echo "Cambios guardados detectados."
+    else
+        echo "No se detectaron cambios guardados en el archivo temporal."
+    fi
+}
+
 # Función auxiliar: obtener source URL si el target existe
 get_source_url() {
     local targets="$1"
@@ -944,16 +975,15 @@ $content"
                 editor=$(get_default_editor)
             fi
             
-            "$editor" "$temp_file"
+            open_editor_for_clipboard_review "$editor" "$temp_file" "$icon_edit"
             
             # Si es archivo temporal, preguntar si copiar de vuelta
             if [[ -z "$output_file" ]]; then
-                echo "${icon_clip}Archivo: $temp_file"
-                echo "¿Copiar al clipboard? (s/n)"
+                echo "${icon_clip}¿Copiar al clipboard el contenido guardado del archivo temporal? (s/n)"
                 read -r resp
                 if [[ "$resp" == "s" || "$resp" == "S" ]]; then
                     cat "$temp_file" | xclip -selection clipboard -i
-                    echo "${icon_ok}Copiado"
+                    echo "${icon_ok}Copiado al clipboard"
                 fi
                 if [[ "$save_temp" == "true" ]]; then
                     echo "${icon_doc}Temporal conservado: $temp_file"
@@ -1039,11 +1069,10 @@ $content"
         if [[ -z "$output_file" ]]; then
             local editor
             editor=$(get_default_editor)
-            echo "${icon_edit}Abriendo en $editor..."
-            "$editor" "$temp_file"
+            open_editor_for_clipboard_review "$editor" "$temp_file" "$icon_edit"
             
             # Preguntar si copiar al portapapeles
-            echo "¿Copiar contenido al clipboard? (s/n)"
+            echo "${icon_clip}¿Copiar al clipboard el contenido guardado del archivo temporal? (s/n)"
             read -r resp
             if [[ "$resp" == "s" || "$resp" == "S" ]]; then
                 cat "$temp_file" | xclip -selection clipboard -i
