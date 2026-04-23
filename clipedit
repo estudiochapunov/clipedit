@@ -45,6 +45,53 @@
 set -e
 
 VERSION="1.6.0"
+declare -a FILTER_PLAN=()
+
+filter_strip_line_numbers=false
+filter_join_lines_spec=""
+filter_trim=false
+filter_dedent=false
+filter_strip_code_fence=false
+filter_strip_prompts=false
+filter_strip_wa_msgs=false
+filter_wa_keep=""
+filter_wa_place="prefix"
+filter_squeeze_blank_lines=false
+filter_make_slug=false
+filter_make_filename=false
+filter_wrap_code_fence_lang=""
+filter_grep_pattern=""
+filter_grep_v_pattern=""
+
+reset_filter_options() {
+    FILTER_PLAN=()
+    filter_strip_line_numbers=false
+    filter_join_lines_spec=""
+    filter_trim=false
+    filter_dedent=false
+    filter_strip_code_fence=false
+    filter_strip_prompts=false
+    filter_strip_wa_msgs=false
+    filter_wa_keep=""
+    filter_wa_place="prefix"
+    filter_squeeze_blank_lines=false
+    filter_make_slug=false
+    filter_make_filename=false
+    filter_wrap_code_fence_lang=""
+    filter_grep_pattern=""
+    filter_grep_v_pattern=""
+    return 0
+}
+
+require_flag_value() {
+    local flag="$1"
+    local argc="$2"
+
+    if (( argc < 2 )); then
+        echo "Error: $flag requiere un valor" >&2
+        return 1
+    fi
+}
 
 # Función auxiliar: detectar editor default del sistema
 get_default_editor() {
@@ -523,275 +570,404 @@ wrap_code_fence_filter() {
     printf '\n```\n'
 }
 
-apply_text_filters() {
+normalize_join_lines_spec() {
+    local join_spec="$1"
+
+    if [[ "$join_spec" == "u" ]]; then
+        printf 'all'
+    elif [[ "$join_spec" == u* ]]; then
+        printf '%s' "${join_spec#u}"
+    else
+        printf '%s' "$join_spec"
+    fi
+}
+
+validate_join_lines_spec() {
+    local join_spec="$1"
+
+    [[ -z "$join_spec" ]] && return 0
+    [[ "$join_spec" == "all" ]] && return 0
+    [[ "$join_spec" =~ ^[0-9]+,[0-9]+(\;[0-9]+,[0-9]+)*$ ]] && return 0
+    return 1
+}
+
+validate_args() {
+    local input_selection="$1"
+    local output_selection="$2"
+    local wa_keep="$3"
+    local wa_place="$4"
+    local join_lines_spec="$5"
+    local wrap_code_fence_lang="$6"
+    local grep_pattern="$7"
+    local grep_v_pattern="$8"
+    local raw_target="$9"
+
+    if [[ "$input_selection" != "clipboard" && "$input_selection" != "primary" ]]; then
+        echo "Error: --input-selection acepta solo clipboard o primary" >&2
+        return 1
+    fi
+
+    if [[ "$output_selection" != "clipboard" && "$output_selection" != "primary" && "$output_selection" != "both" ]]; then
+        echo "Error: --output-selection acepta solo clipboard, primary o both" >&2
+        return 1
+    fi
+
+    if [[ "$wa_place" != "prefix" && "$wa_place" != "suffix" ]]; then
+        echo "Error: --wa-place acepta solo prefix o suffix" >&2
+        return 1
+    fi
+
+    if [[ "$wa_keep" == "__MISSING__" ]]; then
+        echo "Error: --wa-keep requiere una lista de campos" >&2
+        return 1
+    fi
+
+    if [[ "$wa_place" == "__MISSING__" ]]; then
+        echo "Error: --wa-place requiere prefix o suffix" >&2
+        return 1
+    fi
+
+    if [[ -n "$wa_keep" && ! "$wa_keep" =~ ^(name|date|time|datetime|all)(,(name|date|time|datetime|all))*$ ]]; then
+        echo "Error: --wa-keep acepta name,date,time,datetime,all o listas separadas por coma" >&2
+        return 1
+    fi
+
+    if [[ "$join_lines_spec" == "__MISSING__" ]]; then
+        echo "Error: --join-lines requiere una especificacion" >&2
+        return 1
+    fi
+
+    if ! validate_join_lines_spec "$join_lines_spec"; then
+        echo "Error: --join-lines acepta all, u3,7;9,14 o 3,7;9,14" >&2
+        return 1
+    fi
+
+    if [[ "$filter_wrap_code_fence_lang" == "__MISSING__" || "$wrap_code_fence_lang" == "__MISSING__" ]]; then
+        echo "Error: --wrap-code-fence requiere un lenguaje" >&2
+        return 1
+    fi
+
+    if [[ "$grep_pattern" == "__MISSING__" ]]; then
+        echo "Error: --grep requiere un patron" >&2
+        return 1
+    fi
+
+    if [[ "$grep_v_pattern" == "__MISSING__" ]]; then
+        echo "Error: --grep-v requiere un patron" >&2
+        return 1
+    fi
+
+    if [[ "$raw_target" == "__MISSING__" ]]; then
+        echo "Error: --target requiere un target X11" >&2
+        return 1
+    fi
+
+    return 0
+}
+
+build_filter_plan() {
+    FILTER_PLAN=()
+
+    [[ "$filter_strip_line_numbers" == "true" ]] && FILTER_PLAN+=("strip-line-numbers")
+    [[ "$filter_strip_prompts" == "true" ]] && FILTER_PLAN+=("strip-prompts")
+    if [[ "$filter_strip_wa_msgs" == "true" ]]; then
+        FILTER_PLAN+=("strip-wa-msgs:${filter_wa_keep}:${filter_wa_place}")
+    fi
+    [[ "$filter_strip_code_fence" == "true" ]] && FILTER_PLAN+=("strip-code-fence")
+    [[ "$filter_dedent" == "true" ]] && FILTER_PLAN+=("dedent")
+    [[ -n "$filter_grep_pattern" ]] && FILTER_PLAN+=("grep:${filter_grep_pattern}")
+    [[ -n "$filter_grep_v_pattern" ]] && FILTER_PLAN+=("grep-v:${filter_grep_v_pattern}")
+    [[ -n "$filter_join_lines_spec" ]] && FILTER_PLAN+=("join-lines:${filter_join_lines_spec}")
+    [[ "$filter_squeeze_blank_lines" == "true" ]] && FILTER_PLAN+=("squeeze-blank-lines")
+    [[ "$filter_trim" == "true" ]] && FILTER_PLAN+=("trim")
+    [[ "$filter_make_slug" == "true" ]] && FILTER_PLAN+=("slug")
+    [[ "$filter_make_filename" == "true" ]] && FILTER_PLAN+=("filename-safe")
+    [[ -n "$filter_wrap_code_fence_lang" ]] && FILTER_PLAN+=("wrap-code-fence:${filter_wrap_code_fence_lang}")
+    return 0
+}
+
+print_filter_plan() {
+    if [[ ${#FILTER_PLAN[@]} -eq 0 ]]; then
+        echo "  - (none)"
+        return 0
+    fi
+
+    local step
+    for step in "${FILTER_PLAN[@]}"; do
+        echo "  - $step"
+    done
+}
+
+apply_filter_step() {
     local content="$1"
-    local strip_numbers="$2"
-    local join_spec="$3"
-    local trim_text="$4"
-    local dedent_text="$5"
-    local strip_fence="$6"
-    local strip_prompts="$7"
-    local squeeze_blanks="$8"
-    local make_slug="$9"
-    local make_filename="${10}"
-    local wrap_lang="${11}"
-    local grep_pattern="${12}"
-    local grep_v_pattern="${13}"
-    local strip_wa_msgs="${14}"
-    local wa_keep="${15}"
-    local wa_place="${16}"
+    local step="$2"
+    local op="${step%%:*}"
+    local rest=""
 
-    if [[ "$strip_numbers" == "true" ]]; then
-        content=$(printf '%s\n' "$content" | strip_line_numbers_filter)
+    if [[ "$step" == *:* ]]; then
+        rest="${step#*:}"
     fi
 
-    if [[ "$strip_prompts" == "true" ]]; then
-        content=$(printf '%s\n' "$content" | strip_prompts_filter)
-    fi
+    case "$op" in
+        strip-line-numbers)
+            printf '%s\n' "$content" | strip_line_numbers_filter
+            ;;
+        strip-prompts)
+            printf '%s\n' "$content" | strip_prompts_filter
+            ;;
+        strip-wa-msgs)
+            local wa_keep="${rest%%:*}"
+            local wa_place="${rest#*:}"
+            if [[ "$rest" == "$wa_keep" ]]; then
+                wa_place="prefix"
+            fi
+            printf '%s\n' "$content" | strip_wa_msgs_filter "$wa_keep" "$wa_place"
+            ;;
+        strip-code-fence)
+            printf '%s\n' "$content" | strip_code_fence_filter
+            ;;
+        dedent)
+            printf '%s\n' "$content" | dedent_filter
+            ;;
+        grep)
+            printf '%s\n' "$content" | grep_filter "$rest"
+            ;;
+        grep-v)
+            printf '%s\n' "$content" | grep_v_filter "$rest"
+            ;;
+        join-lines)
+            printf '%s\n' "$content" | join_lines_filter "$rest"
+            ;;
+        squeeze-blank-lines)
+            printf '%s\n' "$content" | squeeze_blank_lines_filter
+            ;;
+        trim)
+            printf '%s\n' "$content" | trim_filter
+            ;;
+        slug)
+            printf '%s\n' "$content" | slug_filter
+            ;;
+        filename-safe)
+            printf '%s\n' "$content" | filename_safe_filter
+            ;;
+        wrap-code-fence)
+            printf '%s' "$content" | wrap_code_fence_filter "$rest"
+            ;;
+        *)
+            printf '%s' "$content"
+            ;;
+    esac
+}
 
-    if [[ "$strip_wa_msgs" == "true" ]]; then
-        content=$(printf '%s\n' "$content" | strip_wa_msgs_filter "$wa_keep" "$wa_place")
-    fi
+apply_filter_plan() {
+    local content="$1"
+    local step
 
-    if [[ "$strip_fence" == "true" ]]; then
-        content=$(printf '%s\n' "$content" | strip_code_fence_filter)
-    fi
-
-    if [[ "$dedent_text" == "true" ]]; then
-        content=$(printf '%s\n' "$content" | dedent_filter)
-    fi
-
-    if [[ -n "$grep_pattern" ]]; then
-        content=$(printf '%s\n' "$content" | grep_filter "$grep_pattern")
-    fi
-
-    if [[ -n "$grep_v_pattern" ]]; then
-        content=$(printf '%s\n' "$content" | grep_v_filter "$grep_v_pattern")
-    fi
-
-    if [[ -n "$join_spec" ]]; then
-        content=$(printf '%s\n' "$content" | join_lines_filter "$join_spec")
-    fi
-
-    if [[ "$squeeze_blanks" == "true" ]]; then
-        content=$(printf '%s\n' "$content" | squeeze_blank_lines_filter)
-    fi
-
-    if [[ "$trim_text" == "true" ]]; then
-        content=$(printf '%s\n' "$content" | trim_filter)
-    fi
-
-    if [[ "$make_slug" == "true" ]]; then
-        content=$(printf '%s\n' "$content" | slug_filter)
-    fi
-
-    if [[ "$make_filename" == "true" ]]; then
-        content=$(printf '%s\n' "$content" | filename_safe_filter)
-    fi
-
-    if [[ -n "$wrap_lang" ]]; then
-        content=$(printf '%s' "$content" | wrap_code_fence_filter "$wrap_lang")
-    fi
+    for step in "${FILTER_PLAN[@]}"; do
+        content=$(apply_filter_step "$content" "$step")
+    done
 
     printf '%s' "$content"
 }
 
+apply_text_filters() {
+    local content="$1"
+
+    build_filter_plan
+    apply_filter_plan "$content"
+}
+
 # Función principal
 main() {
-    local from="auto"
-    local to="edit"
-    local editor=""
-    local output_file=""
-    local include_source=false
-    local input_selection="clipboard"
-    local output_selection="clipboard"
-    local show_targets=false
-    local peek=false
-    local raw_target=""
-    local copy_only=false
-    local save_temp=false
-    local no_emoji=false
-    local strip_line_numbers=false
-    local join_lines_spec=""
-    local stdout_output=false
-    local trim_text=false
-    local dedent_text=false
-    local strip_code_fence=false
-    local strip_prompts=false
-    local strip_wa_msgs=false
-    local wa_keep=""
-    local wa_place="prefix"
-    local squeeze_blank_lines=false
-    local make_slug=false
-    local make_filename=false
-    local wrap_code_fence_lang=""
-    local dry_run=false
-    local grep_pattern=""
-    local grep_v_pattern=""
-    local show_version=false
+    local opt_from="auto"
+    local opt_to="edit"
+    local opt_editor=""
+    local opt_output_file=""
+    local opt_include_source=false
+    local opt_input_selection="clipboard"
+    local opt_output_selection="clipboard"
+    local opt_show_targets=false
+    local opt_peek=false
+    local opt_raw_target=""
+    local opt_copy_only=false
+    local opt_save_temp=false
+    local opt_no_emoji=false
+    local opt_stdout=false
+    local opt_dry_run=false
+    local opt_show_version=false
     local temp_file
+
+    reset_filter_options
     
     # Parsear argumentos
     while [[ $# -gt 0 ]]; do
         case "$1" in
             -f|--from)
-                from="$2"
+                require_flag_value "$1" "$#" || return 1
+                opt_from="${2-}"
                 shift 2
                 ;;
             -t|--to)
-                to="$2"
+                require_flag_value "$1" "$#" || return 1
+                opt_to="${2-}"
                 shift 2
                 ;;
             -e|--editor)
-                editor="$2"
+                require_flag_value "$1" "$#" || return 1
+                opt_editor="${2-}"
                 shift 2
                 ;;
             -o|--output)
-                output_file="$2"
+                require_flag_value "$1" "$#" || return 1
+                opt_output_file="${2-}"
                 shift 2
                 ;;
             -s|--source)
-                include_source=true
+                opt_include_source=true
                 shift
                 ;;
             --input-selection|--in-sel)
-                input_selection="$2"
+                require_flag_value "$1" "$#" || return 1
+                opt_input_selection="${2-}"
                 shift 2
                 ;;
             --output-selection|--out-sel)
-                output_selection="$2"
+                require_flag_value "$1" "$#" || return 1
+                opt_output_selection="${2-}"
                 shift 2
                 ;;
             --in-clip)
-                input_selection="clipboard"
+                opt_input_selection="clipboard"
                 shift
                 ;;
             --in-primary)
-                input_selection="primary"
+                opt_input_selection="primary"
                 shift
                 ;;
             --out-clip)
-                output_selection="clipboard"
+                opt_output_selection="clipboard"
                 shift
                 ;;
             --out-primary)
-                output_selection="primary"
+                opt_output_selection="primary"
                 shift
                 ;;
             --both-sel)
-                output_selection="both"
+                opt_output_selection="both"
                 shift
                 ;;
             --targets)
-                show_targets=true
+                opt_show_targets=true
                 shift
                 ;;
             --peek)
-                peek=true
+                opt_peek=true
                 shift
                 ;;
             --target)
-                raw_target="$2"
+                require_flag_value "$1" "$#" || return 1
+                opt_raw_target="${2-__MISSING__}"
                 shift 2
                 ;;
             --plain)
-                to="text"
-                copy_only=true
+                opt_to="text"
+                opt_copy_only=true
                 shift
                 ;;
             --copy-only|--no-edit)
-                copy_only=true
+                opt_copy_only=true
                 shift
                 ;;
             --save-temp)
-                save_temp=true
+                opt_save_temp=true
                 shift
                 ;;
             --no-emoji)
-                no_emoji=true
+                opt_no_emoji=true
                 shift
                 ;;
             --strip-line-numbers)
-                strip_line_numbers=true
+                filter_strip_line_numbers=true
                 shift
                 ;;
             --join-lines)
-                join_lines_spec="$2"
-                if [[ "$join_lines_spec" == u* && "$join_lines_spec" != "u" ]]; then
-                    join_lines_spec="${join_lines_spec#u}"
-                elif [[ "$join_lines_spec" == "u" ]]; then
-                    join_lines_spec="all"
-                fi
+                require_flag_value "$1" "$#" || return 1
+                filter_join_lines_spec=$(normalize_join_lines_spec "${2-__MISSING__}")
                 shift 2
                 ;;
             --stdout)
-                stdout_output=true
+                opt_stdout=true
                 shift
                 ;;
             --trim)
-                trim_text=true
+                filter_trim=true
                 shift
                 ;;
             --dedent)
-                dedent_text=true
+                filter_dedent=true
                 shift
                 ;;
             --strip-code-fence)
-                strip_code_fence=true
+                filter_strip_code_fence=true
                 shift
                 ;;
             --strip-prompts)
-                strip_prompts=true
+                filter_strip_prompts=true
                 shift
                 ;;
             --strip-wa-msgs)
-                strip_wa_msgs=true
+                filter_strip_wa_msgs=true
                 shift
                 ;;
             --wa-keep)
-                strip_wa_msgs=true
-                wa_keep="$2"
+                require_flag_value "$1" "$#" || return 1
+                filter_strip_wa_msgs=true
+                filter_wa_keep="${2-__MISSING__}"
                 shift 2
                 ;;
             --wa-place)
-                strip_wa_msgs=true
-                wa_place="$2"
+                require_flag_value "$1" "$#" || return 1
+                filter_strip_wa_msgs=true
+                filter_wa_place="${2-__MISSING__}"
                 shift 2
                 ;;
             --squeeze-blank-lines)
-                squeeze_blank_lines=true
+                filter_squeeze_blank_lines=true
                 shift
                 ;;
             --slug)
-                make_slug=true
-                to="text"
-                copy_only=true
+                filter_make_slug=true
+                opt_to="text"
+                opt_copy_only=true
                 shift
                 ;;
             --filename-safe)
-                make_filename=true
-                to="text"
-                copy_only=true
+                filter_make_filename=true
+                opt_to="text"
+                opt_copy_only=true
                 shift
                 ;;
             --wrap-code-fence)
-                wrap_code_fence_lang="$2"
+                require_flag_value "$1" "$#" || return 1
+                filter_wrap_code_fence_lang="${2-__MISSING__}"
                 shift 2
                 ;;
             --dry-run)
-                dry_run=true
+                opt_dry_run=true
                 shift
                 ;;
             --grep)
-                grep_pattern="$2"
+                require_flag_value "$1" "$#" || return 1
+                filter_grep_pattern="${2-__MISSING__}"
                 shift 2
                 ;;
             --grep-v)
-                grep_v_pattern="$2"
+                require_flag_value "$1" "$#" || return 1
+                filter_grep_v_pattern="${2-__MISSING__}"
                 shift 2
                 ;;
             --version)
-                show_version=true
+                opt_show_version=true
                 shift
                 ;;
             -h|--help)
@@ -871,32 +1047,32 @@ main() {
         esac
     done
 
-    if [[ "$show_version" == "true" ]]; then
+    filter_wa_keep=$(printf '%s' "$filter_wa_keep" | tr -d '[:space:]')
+
+    validate_args \
+        "$opt_input_selection" \
+        "$opt_output_selection" \
+        "$filter_wa_keep" \
+        "$filter_wa_place" \
+        "$filter_join_lines_spec" \
+        "$filter_wrap_code_fence_lang" \
+        "$filter_grep_pattern" \
+        "$filter_grep_v_pattern" \
+        "$opt_raw_target" || return 1
+
+    if [[ "$opt_raw_target" == "__MISSING__" ]]; then
+        opt_raw_target=""
+    fi
+    [[ "$filter_wrap_code_fence_lang" == "__MISSING__" ]] && filter_wrap_code_fence_lang=""
+    [[ "$filter_grep_pattern" == "__MISSING__" ]] && filter_grep_pattern=""
+    [[ "$filter_grep_v_pattern" == "__MISSING__" ]] && filter_grep_v_pattern=""
+
+    build_filter_plan
+
+    if [[ "$opt_show_version" == "true" ]]; then
         echo "clipedit $VERSION"
         echo "repo: https://github.com/estudiochapunov/clipedit"
         return 0
-    fi
-
-    wa_keep=$(printf '%s' "$wa_keep" | tr -d '[:space:]')
-
-    if [[ "$wa_place" != "prefix" && "$wa_place" != "suffix" ]]; then
-        echo "Error: --wa-place acepta solo prefix o suffix" >&2
-        return 1
-    fi
-
-    if [[ -n "$wa_keep" && ! "$wa_keep" =~ ^(name|date|time|datetime|all)(,(name|date|time|datetime|all))*$ ]]; then
-        echo "Error: --wa-keep acepta name,date,time,datetime,all o listas separadas por coma" >&2
-        return 1
-    fi
-
-    if [[ "$input_selection" != "clipboard" && "$input_selection" != "primary" ]]; then
-        echo "Error: --input-selection acepta solo clipboard o primary" >&2
-        return 1
-    fi
-
-    if [[ "$output_selection" != "clipboard" && "$output_selection" != "primary" && "$output_selection" != "both" ]]; then
-        echo "Error: --output-selection acepta solo clipboard, primary o both" >&2
-        return 1
     fi
 
     local icon_image="📷 "
@@ -905,7 +1081,7 @@ main() {
     local icon_edit="📝 "
     local icon_clip="📋 "
     local icon_ok="✅ "
-    if [[ "$no_emoji" == "true" ]]; then
+    if [[ "$opt_no_emoji" == "true" ]]; then
         icon_image=""
         icon_doc=""
         icon_warn=""
@@ -916,50 +1092,50 @@ main() {
     
     # Obtener targets del portapapeles
     local targets
-    targets=$(get_targets "$input_selection")
+    targets=$(get_targets "$opt_input_selection")
 
-    if [[ -n "$raw_target" ]]; then
-        if [[ -n "$output_file" ]]; then
-            read_x11_selection "$input_selection" "$raw_target" > "$output_file"
-            echo "${icon_doc}Guardado: $output_file"
+    if [[ -n "$opt_raw_target" ]]; then
+        if [[ -n "$opt_output_file" ]]; then
+            read_x11_selection "$opt_input_selection" "$opt_raw_target" > "$opt_output_file"
+            echo "${icon_doc}Guardado: $opt_output_file"
         else
-            read_x11_selection "$input_selection" "$raw_target"
+            read_x11_selection "$opt_input_selection" "$opt_raw_target"
         fi
         return 0
     fi
     
     # Detectar tipo de contenido si from=auto
-    if [[ "$from" == "auto" ]]; then
-        from=$(detect_content_type "$targets")
+    if [[ "$opt_from" == "auto" ]]; then
+        opt_from=$(detect_content_type "$targets")
     fi
 
-    if [[ "$show_targets" == "true" ]]; then
+    if [[ "$opt_show_targets" == "true" ]]; then
         print_targets "$targets"
         return 0
     fi
 
-    if [[ "$peek" == "true" ]]; then
-        peek_clipboard "$targets" "$from" "$input_selection"
+    if [[ "$opt_peek" == "true" ]]; then
+        peek_clipboard "$targets" "$opt_from" "$opt_input_selection"
         return 0
     fi
 
-    if [[ "$dry_run" == "true" && "$to" == "edit" ]]; then
-        to="text"
+    if [[ "$opt_dry_run" == "true" && "$opt_to" == "edit" ]]; then
+        opt_to="text"
     fi
 
-    if [[ "$stdout_output" == "true" && "$to" == "edit" ]]; then
-        to="text"
+    if [[ "$opt_stdout" == "true" && "$opt_to" == "edit" ]]; then
+        opt_to="text"
     fi
 
-    if [[ "$copy_only" == "true" && "$to" == "edit" ]]; then
-        to="text"
+    if [[ "$opt_copy_only" == "true" && "$opt_to" == "edit" ]]; then
+        opt_to="text"
     fi
     
     # Determinar archivo de salida
-    if [[ -n "$output_file" ]]; then
-        temp_file="$output_file"
+    if [[ -n "$opt_output_file" ]]; then
+        temp_file="$opt_output_file"
     else
-        case "$to" in
+        case "$opt_to" in
             markdown) temp_file=$(mktemp /tmp/clip-XXXXXX.md) ;;
             html)     temp_file=$(mktemp /tmp/clip-XXXXXX.html) ;;
             text)     temp_file=$(mktemp /tmp/clip-XXXXXX.txt) ;;
@@ -970,25 +1146,25 @@ main() {
     
     # Procesar según tipo de contenido
     local source_url=""
-    if [[ "$include_source" == "true" ]]; then
-        source_url=$(get_source_url "$targets" "$input_selection")
+    if [[ "$opt_include_source" == "true" ]]; then
+        source_url=$(get_source_url "$targets" "$opt_input_selection")
     fi
     
     # Imagen: extraer y guardar
-    if [[ "$from" == image-png || "$from" == image-jpeg || "$from" == image-gif ]]; then
+    if [[ "$opt_from" == image-png || "$opt_from" == image-jpeg || "$opt_from" == image-gif ]]; then
         local img_ext
-        img_ext=$(get_image_ext "$from")
+        img_ext=$(get_image_ext "$opt_from")
         local img_file
         img_file=$(mktemp /tmp/clipimg-XXXXXX.${img_ext})
         
         # Extraer imagen
-        read_x11_selection "$input_selection" "image/${img_ext}" > "$img_file" 2>/dev/null || \
-        read_x11_selection "$input_selection" > "$img_file"
+        read_x11_selection "$opt_input_selection" "image/${img_ext}" > "$img_file" 2>/dev/null || \
+        read_x11_selection "$opt_input_selection" > "$img_file"
         
         echo "${icon_image}Imagen guardada: $img_file"
         
         # Crear referencia según formato de salida
-        case "$to" in
+        case "$opt_to" in
             markdown)
                 echo "![image]($img_file)" > "$temp_file"
                 ;;
@@ -1000,12 +1176,12 @@ main() {
                 ;;
         esac
         
-        if [[ -n "$output_file" ]]; then
+        if [[ -n "$opt_output_file" ]]; then
             echo "${icon_doc}$temp_file"
         else
             # Copiar al portapapeles
-            copy_file_to_x11_selection "$temp_file" "$output_selection"
-            if [[ "$save_temp" == "true" ]]; then
+            copy_file_to_x11_selection "$temp_file" "$opt_output_selection"
+            if [[ "$opt_save_temp" == "true" ]]; then
                 echo "${icon_doc}Temporal: $temp_file"
             else
                 rm -f "$temp_file"
@@ -1016,8 +1192,8 @@ main() {
     
     # Texto/HTML/RTF: procesar con pandoc
     local content
-    content=$(get_clipboard_content "$from" "$input_selection")
-    content=$(apply_text_filters "$content" "$strip_line_numbers" "$join_lines_spec" "$trim_text" "$dedent_text" "$strip_code_fence" "$strip_prompts" "$squeeze_blank_lines" "$make_slug" "$make_filename" "$wrap_code_fence_lang" "$grep_pattern" "$grep_v_pattern" "$strip_wa_msgs" "$wa_keep" "$wa_place")
+    content=$(get_clipboard_content "$opt_from" "$opt_input_selection")
+    content=$(apply_text_filters "$content")
     
     # Agregar source si corresponde
     if [[ -n "$source_url" ]]; then
@@ -1027,7 +1203,7 @@ $content"
     fi
     
     # Convertir según formato de salida
-    case "$to" in
+    case "$opt_to" in
         markdown)
             echo "$content" | pandoc -f html -t markdown > "$temp_file" 2>/dev/null || \
             echo "$content" | pandoc -f rtf -t markdown > "$temp_file" 2>/dev/null || \
@@ -1038,7 +1214,7 @@ $content"
             echo "$content" > "$temp_file"
             ;;
         text)
-            case "$from" in
+            case "$opt_from" in
                 html)
                     echo "$content" | pandoc -f html -t plain > "$temp_file" 2>/dev/null || \
                     echo "$content" > "$temp_file"
@@ -1074,21 +1250,21 @@ $content"
             # Modo editor: abrir con editor
             echo "$content" > "$temp_file"
             
-            if [[ -z "$editor" ]]; then
-                editor=$(get_default_editor)
+            if [[ -z "$opt_editor" ]]; then
+                opt_editor=$(get_default_editor)
             fi
             
-            open_editor_for_clipboard_review "$editor" "$temp_file" "$icon_edit"
+            open_editor_for_clipboard_review "$opt_editor" "$temp_file" "$icon_edit"
             
             # Si es archivo temporal, preguntar si copiar de vuelta
-            if [[ -z "$output_file" ]]; then
-                echo "${icon_clip}¿Copiar a $(selection_label "$output_selection") el contenido guardado del archivo temporal? (s/n)"
+            if [[ -z "$opt_output_file" ]]; then
+                echo "${icon_clip}¿Copiar a $(selection_label "$opt_output_selection") el contenido guardado del archivo temporal? (s/n)"
                 read -r resp
                 if [[ "$resp" == "s" || "$resp" == "S" ]]; then
-                    copy_file_to_x11_selection "$temp_file" "$output_selection"
-                    echo "${icon_ok}Copiado a $(selection_label "$output_selection")"
+                    copy_file_to_x11_selection "$temp_file" "$opt_output_selection"
+                    echo "${icon_ok}Copiado a $(selection_label "$opt_output_selection")"
                 fi
-                if [[ "$save_temp" == "true" ]]; then
+                if [[ "$opt_save_temp" == "true" ]]; then
                     echo "${icon_doc}Temporal conservado: $temp_file"
                 else
                     rm -f "$temp_file"
@@ -1101,41 +1277,27 @@ $content"
     esac
     
     # Si hay output file o es modo conversión
-    if [[ -n "$output_file" || "$to" != "edit" ]]; then
+    if [[ -n "$opt_output_file" || "$opt_to" != "edit" ]]; then
         # Siempre mostrar donde quedó el archivo temporal
-        if [[ -z "$output_file" && "$stdout_output" != "true" && "$dry_run" != "true" && ( "$copy_only" != "true" || "$save_temp" == "true" ) ]]; then
+        if [[ -z "$opt_output_file" && "$opt_stdout" != "true" && "$opt_dry_run" != "true" && ( "$opt_copy_only" != "true" || "$opt_save_temp" == "true" ) ]]; then
             echo "${icon_doc}Temporal: $temp_file"
         fi
         
-        if [[ "$dry_run" == "true" ]]; then
+        if [[ "$opt_dry_run" == "true" ]]; then
             echo "ClipEdit dry-run"
-            echo "from=$from"
-            echo "to=$to"
+            echo "from=$opt_from"
+            echo "to=$opt_to"
             echo "output=stdout"
-            echo "input_selection=$input_selection"
-            echo "output_selection=$output_selection"
+            echo "input_selection=$opt_input_selection"
+            echo "output_selection=$opt_output_selection"
             echo "clipboard_write=false"
             echo "editor=false"
             echo "filters:"
-            [[ "$strip_line_numbers" == "true" ]] && echo "  - strip-line-numbers"
-            [[ -n "$join_lines_spec" ]] && echo "  - join-lines:$join_lines_spec"
-            [[ "$trim_text" == "true" ]] && echo "  - trim"
-            [[ "$dedent_text" == "true" ]] && echo "  - dedent"
-            [[ "$strip_code_fence" == "true" ]] && echo "  - strip-code-fence"
-            [[ "$strip_prompts" == "true" ]] && echo "  - strip-prompts"
-            [[ "$strip_wa_msgs" == "true" ]] && echo "  - strip-wa-msgs"
-            [[ -n "$wa_keep" ]] && echo "  - wa-keep:$wa_keep"
-            [[ "$strip_wa_msgs" == "true" && -n "$wa_keep" ]] && echo "  - wa-place:$wa_place"
-            [[ "$squeeze_blank_lines" == "true" ]] && echo "  - squeeze-blank-lines"
-            [[ "$make_slug" == "true" ]] && echo "  - slug"
-            [[ "$make_filename" == "true" ]] && echo "  - filename-safe"
-            [[ -n "$wrap_code_fence_lang" ]] && echo "  - wrap-code-fence:$wrap_code_fence_lang"
-            [[ -n "$grep_pattern" ]] && echo "  - grep:$grep_pattern"
-            [[ -n "$grep_v_pattern" ]] && echo "  - grep-v:$grep_v_pattern"
+            print_filter_plan
             echo "---"
             cat "$temp_file"
-            if [[ -z "$output_file" ]]; then
-                if [[ "$save_temp" == "true" ]]; then
+            if [[ -z "$opt_output_file" ]]; then
+                if [[ "$opt_save_temp" == "true" ]]; then
                     echo "${icon_doc}Temporal conservado: $temp_file" >&2
                 else
                     rm -f "$temp_file"
@@ -1144,10 +1306,10 @@ $content"
             return 0
         fi
 
-        if [[ "$stdout_output" == "true" ]]; then
+        if [[ "$opt_stdout" == "true" ]]; then
             cat "$temp_file"
-            if [[ -z "$output_file" ]]; then
-                if [[ "$save_temp" == "true" ]]; then
+            if [[ -z "$opt_output_file" ]]; then
+                if [[ "$opt_save_temp" == "true" ]]; then
                     echo "${icon_doc}Temporal conservado: $temp_file" >&2
                 else
                     rm -f "$temp_file"
@@ -1156,45 +1318,45 @@ $content"
             return 0
         fi
 
-        if [[ "$copy_only" == "true" ]]; then
-            copy_file_to_x11_selection "$temp_file" "$output_selection"
-            echo "${icon_ok}Copiado a $(selection_label "$output_selection")"
-            if [[ -z "$output_file" ]]; then
-                if [[ "$save_temp" == "true" ]]; then
+        if [[ "$opt_copy_only" == "true" ]]; then
+            copy_file_to_x11_selection "$temp_file" "$opt_output_selection"
+            echo "${icon_ok}Copiado a $(selection_label "$opt_output_selection")"
+            if [[ -z "$opt_output_file" ]]; then
+                if [[ "$opt_save_temp" == "true" ]]; then
                     echo "${icon_doc}Temporal conservado: $temp_file"
                 else
                     rm -f "$temp_file"
                 fi
             fi
-            echo "${icon_ok}Convertido a $to"
+            echo "${icon_ok}Convertido a $opt_to"
             return 0
         fi
 
         # Abrir en editor para revisar resultado
-        if [[ -z "$output_file" ]]; then
-            local editor
-            editor=$(get_default_editor)
-            open_editor_for_clipboard_review "$editor" "$temp_file" "$icon_edit"
+        if [[ -z "$opt_output_file" ]]; then
+            if [[ -z "$opt_editor" ]]; then
+                opt_editor=$(get_default_editor)
+            fi
+            open_editor_for_clipboard_review "$opt_editor" "$temp_file" "$icon_edit"
             
             # Preguntar si copiar al portapapeles
-            echo "${icon_clip}¿Copiar a $(selection_label "$output_selection") el contenido guardado del archivo temporal? (s/n)"
+            echo "${icon_clip}¿Copiar a $(selection_label "$opt_output_selection") el contenido guardado del archivo temporal? (s/n)"
             read -r resp
             if [[ "$resp" == "s" || "$resp" == "S" ]]; then
-                copy_file_to_x11_selection "$temp_file" "$output_selection"
-                echo "${icon_ok}Copiado a $(selection_label "$output_selection")"
+                copy_file_to_x11_selection "$temp_file" "$opt_output_selection"
+                echo "${icon_ok}Copiado a $(selection_label "$opt_output_selection")"
             fi
-            if [[ "$save_temp" == "true" ]]; then
+            if [[ "$opt_save_temp" == "true" ]]; then
                 echo "${icon_doc}Temporal conservado: $temp_file"
             else
                 rm -f "$temp_file"
             fi
         else
-            copy_file_to_x11_selection "$temp_file" "$output_selection"
             echo "${icon_doc}Guardado: $temp_file"
         fi
     fi
 
-    echo "${icon_ok}Convertido a $to"
+    echo "${icon_ok}Convertido a $opt_to"
 }
 
 main "$@"

@@ -134,9 +134,21 @@ assert_eq \
     "CLIPBOARD y PRIMARY" \
     "$(selection_label both)"
 
+reset_filter_options
+filter_strip_line_numbers=true
+filter_join_lines_spec="all"
+filter_trim=true
+filter_dedent=true
+filter_strip_code_fence=true
+
 assert_eq \
     "apply_text_filters composes filters in current order" \
     "echo uno && echo dos" \
-    "$(apply_text_filters $'1 | ```bash\n2 | echo uno\n3 | && echo dos\n4 | ```' true all true true true false false false false "" "" "" false "" "")"
+    "$(apply_text_filters $'1 | ```bash\n2 | echo uno\n3 | && echo dos\n4 | ```')"
+
+assert_eq \
+    "build_filter_plan exposes same pipeline used by apply_text_filters" \
+    $'  - strip-line-numbers\n  - strip-code-fence\n  - dedent\n  - join-lines:all\n  - trim' \
+    "$(build_filter_plan; print_filter_plan)"
 
 printf 'All %d filter tests passed.\n' "$tests_run"
