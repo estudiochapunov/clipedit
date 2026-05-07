@@ -134,6 +134,36 @@ assert_eq \
     "CLIPBOARD y PRIMARY" \
     "$(selection_label both)"
 
+assert_eq \
+    "validate-history-selection-spec accepts single values and ranges" \
+    "ok" \
+    "$(validate_history_selection_spec '1,3-5,9' && printf 'ok')"
+
+assert_eq \
+    "expand-history-selection-spec preserves requested order" \
+    $'1\n3\n4\n5\n9' \
+    "$(expand_history_selection_spec '1,3-5,9')"
+
+assert_eq \
+    "expand-history-selection-spec supports descending ranges" \
+    $'5\n4\n3' \
+    "$(expand_history_selection_spec '5-3')"
+
+assert_eq \
+    "history-sql-literal escapes single quotes" \
+    "'O''Reilly'" \
+    "$(history_sql_literal "O'Reilly")"
+
+assert_eq \
+    "history-type-label-expr emits file labels with mimetype" \
+    $'CASE\n    WHEN clip_class = \'file\' AND subj_mimetype_name IS NOT NULL THEN \'file:\' || subj_mimetype_name\n    WHEN clip_class = \'file\' THEN \'file\'\n    ELSE clip_class\nEND' \
+    "$(history_type_label_expr)"
+
+assert_eq \
+    "validate-history-limit accepts positive integers" \
+    "ok" \
+    "$(validate_history_limit 20 && printf 'ok')"
+
 reset_filter_options
 filter_strip_line_numbers=true
 filter_join_lines_spec="all"

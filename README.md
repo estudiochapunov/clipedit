@@ -73,7 +73,11 @@ clipedit [FLAGS]
 | `--both-sel` | Write to both CLIPBOARD and PRIMARY | |
 | `--targets` | List available clipboard formats | |
 | `--peek` | Show clipboard diagnostics and a short preview | |
-| `--target TARGET` | Extract a raw X11 clipboard target | `--target text/html` |
+| `--target TARGET` | Extract a raw X11 clipboard target, or `paths` with `--history` file selections | `--target text/html` |
+| `--history MODE` | Read from Diodon/Zeitgeist history instead of the live clipboard | `--history 1-3` |
+| `--hist MODE` | Alias for `--history` | |
+| `--limit N` | Limit rows for `--history list` or `--history search` | `--limit 10` |
+| `--search PATTERN` | Search pattern for `--history list` or `--history search` | `--search clipedit` |
 | `--plain` | Convert to plain text and copy without opening an editor | |
 | `--copy-only` | Convert and copy without opening an editor | |
 | `--no-edit` | Alias for `--copy-only` | |
@@ -203,7 +207,55 @@ clipedit --target text/html
 
 # Save one raw clipboard target to a file
 clipedit --target text/html -o ~/clip.html
+
+# Recover the most recent Diodon clip
+clipedit --history 1
+
+# Concatenate clips 1 through 3 and print them
+clipedit --history 1-3 --stdout
+
+# Review older clips before sending them back to CLIPBOARD
+clipedit --history 2,4 -e vim --both-sel
+
+# List the most recent history entries with preview
+clipedit --history list --limit 10
+
+# Search inside Diodon history
+clipedit --history search clipedit --limit 5
+
+# Recover persisted file-selection paths explicitly
+clipedit --history 342 --target paths --stdout
 ```
+
+## Diodon History
+
+ClipEdit can also read from the persistent Diodon history stored by Zeitgeist.
+This is read-only in the current release: it lets you inspect and recover text
+clips, then reuse the normal ClipEdit pipeline (`--stdout`, `--plain`,
+`--copy-only`, filters, editor flow, X11 selection routing).
+
+Requirements:
+
+- `sqlite3` installed
+- readable Zeitgeist database at `~/.local/share/zeitgeist/activity.sqlite`
+
+Current modes:
+
+| Command | Behavior |
+|---------|----------|
+| `clipedit --history 1` | Recover the most recent text clip |
+| `clipedit --history 1-5,7` | Concatenate selected clips in that order |
+| `clipedit --history list --limit 20` | Show a table of recent clips |
+| `clipedit --history search foo` | Search clip text previews |
+
+Notes:
+
+- Positions are 1-based. Position 1 is the most recent clip, matching Diodon.
+- Plain text clips are recovered as normal text.
+- File selections persisted by Diodon/Zeitgeist are recovered as the stored path list.
+- `clipedit --history N --target paths --stdout` makes that file-path intent explicit.
+- Rich X11 clipboard targets such as live `text/html` are not reconstructed from history in the current release.
+- `carousel`, `delete`, and `clear` are intentionally deferred to a later phase.
 
 ### Editor workflow
 

@@ -45,6 +45,7 @@
 set -e
 
 VERSION="1.6.0"
+HISTORY_DB_DEFAULT="$HOME/.local/share/zeitgeist/activity.sqlite"
 declare -a FILTER_PLAN=()
 
 filter_strip_line_numbers=false
@@ -80,6 +81,346 @@ reset_filter_options() {
     filter_wrap_code_fence_lang=""
     filter_grep_pattern=""
     filter_grep_v_pattern=""
+    return 0
+}
+
+history_db_path() {
+    if [[ -n "${CLIPEDIT_HISTORY_DB:-}" ]]; then
+        printf '%s\n' "$CLIPEDIT_HISTORY_DB"
+        return 0
+    fi
+    printf '%s\n' "$HISTORY_DB_DEFAULT"
+}
+
+history_backend_available() {
+    command -v sqlite3 >/dev/null 2>&1 || return 1
+    [[ -r "$(history_db_path)" ]] || return 1
+    return 0
+}
+
+history_sql_literal() {
+    local value="$1"
+    value=${value//\'/\'\'}
+    printf "'%s'" "$value"
+}
+
+validate_history_selection_spec() {
+    local spec="$1"
+
+    [[ "$spec" =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]]
+}
+
+expand_history_selection_spec() {
+    local spec="$1"
+    local token start end current
+
+    IFS=',' read -r -a parts <<< "$spec"
+    for token in "${parts[@]}"; do
+        if [[ "$token" =~ ^[0-9]+$ ]]; then
+            printf '%s\n' "$token"
+            continue
+        fi
+
+        if [[ "$token" =~ ^([0-9]+)-([0-9]+)$ ]]; then
+            start="${BASH_REMATCH[1]}"
+            end="${BASH_REMATCH[2]}"
+            if (( start <= end )); then
+                for (( current = start; current <= end; current++ )); do
+                    printf '%s\n' "$current"
+                done
+            else
+                for (( current = start; current >= end; current-- )); do
+                    printf '%s\n' "$current"
+                done
+            fi
+            continue
+        fi
+
+        return 1
+    done
+}
+
+validate_history_limit() {
+    local limit="$1"
+
+    [[ "$limit" =~ ^[1-9][0-9]*$ ]]
+}
+
+history_base_cte() {
+    cat <<'EOF'
+ranked AS (
+    SELECT
+        ROW_NUMBER() OVER (ORDER BY timestamp DESC) AS pos,
+        id,
+        timestamp,
+        datetime(timestamp / 1000, 'unixepoch', 'localtime') AS ts_local,
+        actor_uri,
+        subj_origin_uri,
+        subj_uri,
+        coalesce(subj_text, '') AS subj_text,
+        subj_mimetype,
+        (SELECT value FROM mimetype WHERE mimetype.id = event_view.subj_mimetype) AS subj_mimetype_name,
+        subj_interpretation,
+        (SELECT value FROM interpretation WHERE interpretation.id = event_view.subj_interpretation) AS subj_interpretation_name,
+        subj_manifestation,
+        (SELECT value FROM manifestation WHERE manifestation.id = event_view.subj_manifestation) AS subj_manifestation_name,
+        CASE
+            WHEN (SELECT value FROM interpretation WHERE interpretation.id = event_view.subj_interpretation)
+                 LIKE '%FileDataObject' THEN 'file'
+            WHEN payload IS NOT NULL AND length(payload) > 0 THEN 'binary'
+            WHEN coalesce(subj_text, '') != '' THEN 'text'
+            ELSE 'other'
+        END AS clip_class
+    FROM event_view
+    WHERE event_origin_uri = 'application://diodon.desktop'
+      AND subj_uri LIKE 'dav:%'
+)
+EOF
+}
+
+run_history_query() {
+    local sql="$1"
+    sqlite3 -tabs "$(history_db_path)" "$sql"
+}
+
+history_search_clause() {
+    local pattern="$1"
+
+    if [[ -z "$pattern" ]]; then
+        return 0
+    fi
+
+    printf " AND instr(lower(coalesce(subj_text, '')), lower(%s)) > 0" \
+        "$(history_sql_literal "$pattern")"
+}
+
+history_type_label_expr() {
+    cat <<'EOF'
+CASE
+    WHEN clip_class = 'file' AND subj_mimetype_name IS NOT NULL THEN 'file:' || subj_mimetype_name
+    WHEN clip_class = 'file' THEN 'file'
+    ELSE clip_class
+END
+EOF
+}
+
+history_fetch_type_by_pos() {
+    local pos="$1"
+    local base_cte type_expr
+    base_cte=$(history_base_cte)
+    type_expr=$(history_type_label_expr)
+
+    run_history_query "
+WITH
+$base_cte
+SELECT $type_expr
+FROM ranked
+WHERE pos = $pos;
+"
+}
+
+history_fetch_text_by_pos() {
+    local pos="$1"
+    local base_cte
+    base_cte=$(history_base_cte)
+
+    sqlite3 -noheader "$(history_db_path)" "
+WITH
+$base_cte
+SELECT subj_text
+FROM ranked
+WHERE pos = $pos;
+"
+}
+
+history_compose_paths() {
+    local spec="$1"
+    local joined=""
+    local text entry_type pos
+
+    while IFS= read -r pos; do
+        [[ -z "$pos" ]] && continue
+
+        entry_type=$(history_fetch_type_by_pos "$pos")
+        if [[ -z "$entry_type" ]]; then
+            echo "Error: no existe clip #$pos en el historial de Diodon" >&2
+            return 1
+        fi
+
+        if [[ "$entry_type" != file:* ]]; then
+            echo "Error: --target paths solo aplica a selecciones de archivos (clip #$pos: $entry_type)" >&2
+            return 1
+        fi
+
+        text=$(history_fetch_text_by_pos "$pos")
+        if [[ -z "$text" ]]; then
+            echo "Error: el clip #$pos figura como seleccion de archivos pero no trae rutas persistidas" >&2
+            return 1
+        fi
+
+        if [[ -n "$joined" ]]; then
+            joined+=$'\n'
+        fi
+        joined+="$text"
+    done < <(expand_history_selection_spec "$spec")
+
+    printf '%s' "$joined"
+}
+
+history_compose_content() {
+    local spec="$1"
+    local joined=""
+    local text entry_type pos
+
+    while IFS= read -r pos; do
+        [[ -z "$pos" ]] && continue
+
+        entry_type=$(history_fetch_type_by_pos "$pos")
+        if [[ -z "$entry_type" ]]; then
+            echo "Error: no existe clip #$pos en el historial de Diodon" >&2
+            return 1
+        fi
+
+        case "$entry_type" in
+            text|file:*)
+                ;;
+            *)
+                echo "Error: el clip #$pos no es recuperable en esta fase (type=$entry_type)" >&2
+                return 1
+                ;;
+        esac
+
+        text=$(history_fetch_text_by_pos "$pos")
+        if [[ -z "$text" && "$entry_type" == file:* ]]; then
+            echo "Error: el clip #$pos figura como seleccion de archivos pero no trae rutas persistidas" >&2
+            return 1
+        fi
+        if [[ -n "$joined" ]]; then
+            joined+=$'\n\n'
+        fi
+        joined+="$text"
+    done < <(expand_history_selection_spec "$spec")
+
+    printf '%s' "$joined"
+}
+
+history_list_entries() {
+    local limit="$1"
+    local pattern="${2:-}"
+    local base_cte search_clause type_expr
+
+    base_cte=$(history_base_cte)
+    search_clause=$(history_search_clause "$pattern")
+    type_expr=$(history_type_label_expr)
+
+    run_history_query "
+WITH
+$base_cte
+SELECT
+    pos,
+    ts_local,
+    $type_expr AS type_label,
+    actor_uri,
+    substr(
+        replace(replace(subj_text, char(13), ' '), char(10), ' '),
+        1,
+        90
+    ) AS preview
+FROM ranked
+WHERE 1=1$search_clause
+ORDER BY pos
+LIMIT $limit;
+"
+}
+
+print_history_entries_table() {
+    local limit="$1"
+    local pattern="${2:-}"
+    local row_count=0
+    local pos ts type_label actor preview
+
+    printf '%-5s %-19s %-24s %-28s %s\n' "POS" "TIMESTAMP" "TIPO" "ACTOR" "PREVIEW"
+    printf '%-5s %-19s %-24s %-28s %s\n' "-----" "-------------------" "------------------------" "----------------------------" "-------"
+
+    while IFS=$'\t' read -r pos ts type_label actor preview; do
+        [[ -z "$pos" ]] && continue
+        printf '%-5s %-19s %-24s %-28s %s\n' \
+            "$pos" \
+            "$ts" \
+            "${type_label:0:24}" \
+            "${actor:0:28}" \
+            "$preview"
+        row_count=$((row_count + 1))
+    done < <(history_list_entries "$limit" "$pattern")
+
+    if (( row_count == 0 )); then
+        if [[ -n "$pattern" ]]; then
+            echo "No hay resultados en el historial para: $pattern"
+        else
+            echo "No hay clips en el historial de Diodon."
+        fi
+    fi
+}
+
+validate_history_args() {
+    local mode="$1"
+    local spec="$2"
+    local limit="$3"
+    local pattern="$4"
+    local raw_target="${5:-}"
+
+    [[ -z "$mode" ]] && return 0
+
+    if ! history_backend_available; then
+        echo "Error: --history requiere sqlite3 y una base legible en $(history_db_path)" >&2
+        return 1
+    fi
+
+    case "$mode" in
+        fetch)
+            if ! validate_history_selection_spec "$spec"; then
+                echo "Error: --history acepta N, 1-5 o listas separadas por coma" >&2
+                return 1
+            fi
+            if [[ -n "$raw_target" && "$raw_target" != "paths" && "$raw_target" != "file-paths" ]]; then
+                echo "Error: con --history solo se admite --target paths o --target file-paths en esta fase" >&2
+                return 1
+            fi
+            ;;
+        list)
+            if ! validate_history_limit "$limit"; then
+                echo "Error: --limit debe ser un entero positivo" >&2
+                return 1
+            fi
+            if [[ -n "$raw_target" ]]; then
+                echo "Error: --history list no usa --target" >&2
+                return 1
+            fi
+            ;;
+        search)
+            if [[ -z "$pattern" ]]; then
+                echo "Error: --history search requiere un patron" >&2
+                return 1
+            fi
+            if ! validate_history_limit "$limit"; then
+                echo "Error: --limit debe ser un entero positivo" >&2
+                return 1
+            fi
+            if [[ -n "$raw_target" ]]; then
+                echo "Error: --history search no usa --target" >&2
+                return 1
+            fi
+            ;;
+        carousel|interactive|delete|clear)
+            echo "Error: --history $mode todavia no esta implementado en esta fase read-only" >&2
+            return 1
+            ;;
+        *)
+            echo "Error: modo de --history no reconocido: $mode" >&2
+            return 1
+            ;;
+    esac
+
     return 0
 }
 
@@ -795,6 +1136,10 @@ main() {
     local opt_stdout=false
     local opt_dry_run=false
     local opt_show_version=false
+    local opt_history_mode=""
+    local opt_history_spec=""
+    local opt_history_search=""
+    local opt_history_limit="20"
     local temp_file
 
     reset_filter_options
@@ -867,6 +1212,43 @@ main() {
             --target)
                 require_flag_value "$1" "$#" || return 1
                 opt_raw_target="${2-__MISSING__}"
+                shift 2
+                ;;
+            --history|--hist)
+                require_flag_value "$1" "$#" || return 1
+                case "${2-}" in
+                    list)
+                        opt_history_mode="list"
+                        shift 2
+                        ;;
+                    search)
+                        opt_history_mode="search"
+                        if [[ $# -ge 3 && "${3-}" != -* ]]; then
+                            opt_history_search="${3-}"
+                            shift 3
+                        else
+                            shift 2
+                        fi
+                        ;;
+                    carousel|interactive|delete|clear)
+                        opt_history_mode="${2-}"
+                        shift 2
+                        ;;
+                    *)
+                        opt_history_mode="fetch"
+                        opt_history_spec="${2-__MISSING__}"
+                        shift 2
+                        ;;
+                esac
+                ;;
+            --limit)
+                require_flag_value "$1" "$#" || return 1
+                opt_history_limit="${2-__MISSING__}"
+                shift 2
+                ;;
+            --search)
+                require_flag_value "$1" "$#" || return 1
+                opt_history_search="${2-__MISSING__}"
                 shift 2
                 ;;
             --plain)
@@ -992,7 +1374,11 @@ main() {
                 echo "  --both-sel           Escribir a CLIPBOARD y PRIMARY"
                 echo "  --targets            Listar formatos disponibles en el portapapeles"
                 echo "  --peek               Mostrar diagnostico breve del portapapeles"
-                echo "  --target TARGET      Extraer un target X11 especifico"
+                echo "  --target TARGET      Extraer un target X11 especifico o paths con --history"
+                echo "  --history MODO       Leer desde historial Diodon/Zeitgeist"
+                echo "  --hist MODO          Alias corto de --history"
+                echo "  --limit N            Limite para --history list/search (default: 20)"
+                echo "  --search PATRON      Patron para --history list o --history search"
                 echo "  --plain              Convertir a texto plano y copiar al portapapeles"
                 echo "  --copy-only          Convertir y copiar sin abrir editor"
                 echo "  --no-edit            Alias de --copy-only"
@@ -1028,6 +1414,11 @@ main() {
                 echo "  clipedit --targets                # Ver formatos disponibles"
                 echo "  clipedit --peek                   # Diagnosticar contenido actual"
                 echo "  clipedit --target text/html       # Extraer HTML crudo"
+                echo "  clipedit --history 1              # Recuperar el clip mas reciente de Diodon"
+                echo "  clipedit --history 1-3 --stdout   # Imprimir varios clips concatenados"
+                echo "  clipedit --history 342 --target paths --stdout"
+                echo "  clipedit --history list --limit 10"
+                echo "  clipedit --history search clipedit --limit 5"
                 echo "  clipedit --plain                  # Texto plano directo al portapapeles"
                 echo "  clipedit -e vim --both-sel        # Editar y escribir en CLIPBOARD + PRIMARY"
                 echo "  clipedit --in-primary --out-clip --plain"
@@ -1060,6 +1451,18 @@ main() {
         "$filter_grep_v_pattern" \
         "$opt_raw_target" || return 1
 
+    validate_history_args \
+        "$opt_history_mode" \
+        "$opt_history_spec" \
+        "$opt_history_limit" \
+        "$opt_history_search" \
+        "$opt_raw_target" || return 1
+
+    if [[ -n "$opt_history_mode" && ( "$opt_show_targets" == "true" || "$opt_peek" == "true" ) ]]; then
+        echo "Error: --history no se combina con --targets ni --peek en esta fase" >&2
+        return 1
+    fi
+
     if [[ "$opt_raw_target" == "__MISSING__" ]]; then
         opt_raw_target=""
     fi
@@ -1089,10 +1492,32 @@ main() {
         icon_clip=""
         icon_ok=""
     fi
+
+    if [[ "$opt_history_mode" == "list" ]]; then
+        print_history_entries_table "$opt_history_limit" "$opt_history_search"
+        return 0
+    fi
+
+    if [[ "$opt_history_mode" == "search" ]]; then
+        print_history_entries_table "$opt_history_limit" "$opt_history_search"
+        return 0
+    fi
+
+    local history_content=""
+    if [[ "$opt_history_mode" == "fetch" ]]; then
+        if [[ "$opt_raw_target" == "paths" || "$opt_raw_target" == "file-paths" ]]; then
+            history_content=$(history_compose_paths "$opt_history_spec") || return 1
+        else
+            history_content=$(history_compose_content "$opt_history_spec") || return 1
+        fi
+        opt_from="text"
+    fi
     
     # Obtener targets del portapapeles
-    local targets
-    targets=$(get_targets "$opt_input_selection")
+    local targets=""
+    if [[ -z "$history_content" ]]; then
+        targets=$(get_targets "$opt_input_selection")
+    fi
 
     if [[ -n "$opt_raw_target" ]]; then
         if [[ -n "$opt_output_file" ]]; then
@@ -1105,7 +1530,7 @@ main() {
     fi
     
     # Detectar tipo de contenido si from=auto
-    if [[ "$opt_from" == "auto" ]]; then
+    if [[ -z "$history_content" && "$opt_from" == "auto" ]]; then
         opt_from=$(detect_content_type "$targets")
     fi
 
@@ -1146,7 +1571,7 @@ main() {
     
     # Procesar según tipo de contenido
     local source_url=""
-    if [[ "$opt_include_source" == "true" ]]; then
+    if [[ -z "$history_content" && "$opt_include_source" == "true" ]]; then
         source_url=$(get_source_url "$targets" "$opt_input_selection")
     fi
     
@@ -1192,7 +1617,11 @@ main() {
     
     # Texto/HTML/RTF: procesar con pandoc
     local content
-    content=$(get_clipboard_content "$opt_from" "$opt_input_selection")
+    if [[ -n "$history_content" ]]; then
+        content="$history_content"
+    else
+        content=$(get_clipboard_content "$opt_from" "$opt_input_selection")
+    fi
     content=$(apply_text_filters "$content")
     
     # Agregar source si corresponde
@@ -1288,6 +1717,9 @@ $content"
             echo "from=$opt_from"
             echo "to=$opt_to"
             echo "output=stdout"
+            if [[ "$opt_history_mode" == "fetch" ]]; then
+                echo "history=$opt_history_spec"
+            fi
             echo "input_selection=$opt_input_selection"
             echo "output_selection=$opt_output_selection"
             echo "clipboard_write=false"
