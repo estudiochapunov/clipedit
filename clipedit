@@ -1367,6 +1367,19 @@ main() {
                 opt_history_spec="${2-__MISSING__}"
                 shift 2
                 ;;
+            list)
+                opt_history_mode="list"
+                shift
+                ;;
+            search)
+                opt_history_mode="search"
+                if [[ $# -ge 2 && "${2-}" != -* ]]; then
+                    opt_history_search="${2-}"
+                    shift 2
+                else
+                    shift
+                fi
+                ;;
             --limit)
                 require_flag_value "$1" "$#" || return 1
                 opt_history_limit="${2-__MISSING__}"
@@ -1547,6 +1560,7 @@ main() {
                 echo "  clipedit --history 342 --target paths --stdout"
                 echo "  clipedit --history-id 1981 --stdout"
                 echo "  clipedit --history list --limit 10"
+                echo "  clipedit list --limit 10       # Alias comodo de --history list"
                 echo "  clipedit --history search clipedit --limit 5"
                 echo "  clipedit --plain                  # Texto plano directo al portapapeles"
                 echo "  clipedit -e vim --both-sel        # Editar y escribir en CLIPBOARD + PRIMARY"
@@ -1562,7 +1576,9 @@ main() {
                 return 0
                 ;;
             *)
-                shift
+                echo "Error: argumento no reconocido: $1" >&2
+                echo "Usa 'clipedit --help' para ver opciones disponibles." >&2
+                return 1
                 ;;
         esac
     done

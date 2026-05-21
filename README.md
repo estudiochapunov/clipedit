@@ -222,6 +222,9 @@ clipedit --history 2,4 -e vim --both-sel
 # List the most recent history entries with preview
 clipedit --history list --limit 10
 
+# Short alias for the history list
+clipedit list --limit 10
+
 # Search inside Diodon history
 clipedit --history search clipedit --limit 5
 
@@ -252,6 +255,7 @@ Current modes:
 | `clipedit --history 1-5,7` | Concatenate selected clips in that order |
 | `clipedit --history-id 1981` | Recover a stable Zeitgeist event ID |
 | `clipedit --history list --limit 20` | Show a table of recent clips |
+| `clipedit list --limit 20` | Alias for `clipedit --history list --limit 20` |
 | `clipedit --history search foo` | Search clip text previews |
 
 Notes:
