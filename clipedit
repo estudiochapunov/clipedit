@@ -110,6 +110,12 @@ validate_history_selection_spec() {
     [[ "$spec" =~ ^[0-9]+(-[0-9]+)?(,[0-9]+(-[0-9]+)?)*$ ]]
 }
 
+validate_history_id_spec() {
+    local spec="$1"
+
+    [[ "$spec" =~ ^[0-9]+(,[0-9]+)*$ ]]
+}
+
 expand_history_selection_spec() {
     local spec="$1"
     local token start end current
@@ -219,6 +225,21 @@ WHERE pos = $pos;
 "
 }
 
+history_fetch_type_by_id() {
+    local id="$1"
+    local base_cte type_expr
+    base_cte=$(history_base_cte)
+    type_expr=$(history_type_label_expr)
+
+    run_history_query "
+WITH
+$base_cte
+SELECT $type_expr
+FROM ranked
+WHERE id = $id;
+"
+}
+
 history_fetch_text_by_pos() {
     local pos="$1"
     local base_cte
@@ -233,7 +254,21 @@ WHERE pos = $pos;
 "
 }
 
-history_compose_paths() {
+history_fetch_text_by_id() {
+    local id="$1"
+    local base_cte
+    base_cte=$(history_base_cte)
+
+    sqlite3 -noheader "$(history_db_path)" "
+WITH
+$base_cte
+SELECT subj_text
+FROM ranked
+WHERE id = $id;
+"
+}
+
+history_compose_paths_by_pos() {
     local spec="$1"
     local joined=""
     local text entry_type pos
@@ -267,7 +302,42 @@ history_compose_paths() {
     printf '%s' "$joined"
 }
 
-history_compose_content() {
+history_compose_paths_by_id() {
+    local spec="$1"
+    local joined=""
+    local text entry_type id
+
+    IFS=',' read -r -a ids <<< "$spec"
+    for id in "${ids[@]}"; do
+        [[ -z "$id" ]] && continue
+
+        entry_type=$(history_fetch_type_by_id "$id")
+        if [[ -z "$entry_type" ]]; then
+            echo "Error: no existe history id #$id en Diodon/Zeitgeist" >&2
+            return 1
+        fi
+
+        if [[ "$entry_type" != file:* ]]; then
+            echo "Error: --target paths solo aplica a selecciones de archivos (history id #$id: $entry_type)" >&2
+            return 1
+        fi
+
+        text=$(history_fetch_text_by_id "$id")
+        if [[ -z "$text" ]]; then
+            echo "Error: history id #$id figura como seleccion de archivos pero no trae rutas persistidas" >&2
+            return 1
+        fi
+
+        if [[ -n "$joined" ]]; then
+            joined+=$'\n'
+        fi
+        joined+="$text"
+    done
+
+    printf '%s' "$joined"
+}
+
+history_compose_content_by_pos() {
     local spec="$1"
     local joined=""
     local text entry_type pos
@@ -304,6 +374,44 @@ history_compose_content() {
     printf '%s' "$joined"
 }
 
+history_compose_content_by_id() {
+    local spec="$1"
+    local joined=""
+    local text entry_type id
+
+    IFS=',' read -r -a ids <<< "$spec"
+    for id in "${ids[@]}"; do
+        [[ -z "$id" ]] && continue
+
+        entry_type=$(history_fetch_type_by_id "$id")
+        if [[ -z "$entry_type" ]]; then
+            echo "Error: no existe history id #$id en Diodon/Zeitgeist" >&2
+            return 1
+        fi
+
+        case "$entry_type" in
+            text|file:*)
+                ;;
+            *)
+                echo "Error: history id #$id no es recuperable en esta fase (type=$entry_type)" >&2
+                return 1
+                ;;
+        esac
+
+        text=$(history_fetch_text_by_id "$id")
+        if [[ -z "$text" && "$entry_type" == file:* ]]; then
+            echo "Error: history id #$id figura como seleccion de archivos pero no trae rutas persistidas" >&2
+            return 1
+        fi
+        if [[ -n "$joined" ]]; then
+            joined+=$'\n\n'
+        fi
+        joined+="$text"
+    done
+
+    printf '%s' "$joined"
+}
+
 history_list_entries() {
     local limit="$1"
     local pattern="${2:-}"
@@ -318,6 +426,7 @@ WITH
 $base_cte
 SELECT
     pos,
+    id,
     ts_local,
     $type_expr AS type_label,
     actor_uri,
@@ -337,15 +446,16 @@ print_history_entries_table() {
     local limit="$1"
     local pattern="${2:-}"
     local row_count=0
-    local pos ts type_label actor preview
+    local pos id ts type_label actor preview
 
-    printf '%-5s %-19s %-24s %-28s %s\n' "POS" "TIMESTAMP" "TIPO" "ACTOR" "PREVIEW"
-    printf '%-5s %-19s %-24s %-28s %s\n' "-----" "-------------------" "------------------------" "----------------------------" "-------"
+    printf '%-5s %-7s %-19s %-24s %-28s %s\n' "POS" "ID" "TIMESTAMP" "TIPO" "ACTOR" "PREVIEW"
+    printf '%-5s %-7s %-19s %-24s %-28s %s\n' "-----" "-------" "-------------------" "------------------------" "----------------------------" "-------"
 
-    while IFS=$'\t' read -r pos ts type_label actor preview; do
+    while IFS=$'\t' read -r pos id ts type_label actor preview; do
         [[ -z "$pos" ]] && continue
-        printf '%-5s %-19s %-24s %-28s %s\n' \
+        printf '%-5s %-7s %-19s %-24s %-28s %s\n' \
             "$pos" \
+            "$id" \
             "$ts" \
             "${type_label:0:24}" \
             "${actor:0:28}" \
@@ -384,6 +494,16 @@ validate_history_args() {
             fi
             if [[ -n "$raw_target" && "$raw_target" != "paths" && "$raw_target" != "file-paths" ]]; then
                 echo "Error: con --history solo se admite --target paths o --target file-paths en esta fase" >&2
+                return 1
+            fi
+            ;;
+        fetch-id)
+            if ! validate_history_id_spec "$spec"; then
+                echo "Error: --history-id acepta un ID o IDs separados por coma" >&2
+                return 1
+            fi
+            if [[ -n "$raw_target" && "$raw_target" != "paths" && "$raw_target" != "file-paths" ]]; then
+                echo "Error: con --history-id solo se admite --target paths o --target file-paths en esta fase" >&2
                 return 1
             fi
             ;;
@@ -1241,6 +1361,12 @@ main() {
                         ;;
                 esac
                 ;;
+            --history-id|--hist-id)
+                require_flag_value "$1" "$#" || return 1
+                opt_history_mode="fetch-id"
+                opt_history_spec="${2-__MISSING__}"
+                shift 2
+                ;;
             --limit)
                 require_flag_value "$1" "$#" || return 1
                 opt_history_limit="${2-__MISSING__}"
@@ -1377,6 +1503,8 @@ main() {
                 echo "  --target TARGET      Extraer un target X11 especifico o paths con --history"
                 echo "  --history MODO       Leer desde historial Diodon/Zeitgeist"
                 echo "  --hist MODO          Alias corto de --history"
+                echo "  --history-id ID      Leer historial por ID estable de Zeitgeist"
+                echo "  --hist-id ID         Alias corto de --history-id"
                 echo "  --limit N            Limite para --history list/search (default: 20)"
                 echo "  --search PATRON      Patron para --history list o --history search"
                 echo "  --plain              Convertir a texto plano y copiar al portapapeles"
@@ -1417,6 +1545,7 @@ main() {
                 echo "  clipedit --history 1              # Recuperar el clip mas reciente de Diodon"
                 echo "  clipedit --history 1-3 --stdout   # Imprimir varios clips concatenados"
                 echo "  clipedit --history 342 --target paths --stdout"
+                echo "  clipedit --history-id 1981 --stdout"
                 echo "  clipedit --history list --limit 10"
                 echo "  clipedit --history search clipedit --limit 5"
                 echo "  clipedit --plain                  # Texto plano directo al portapapeles"
@@ -1504,11 +1633,19 @@ main() {
     fi
 
     local history_content=""
-    if [[ "$opt_history_mode" == "fetch" ]]; then
+    if [[ "$opt_history_mode" == "fetch" || "$opt_history_mode" == "fetch-id" ]]; then
         if [[ "$opt_raw_target" == "paths" || "$opt_raw_target" == "file-paths" ]]; then
-            history_content=$(history_compose_paths "$opt_history_spec") || return 1
+            if [[ "$opt_history_mode" == "fetch-id" ]]; then
+                history_content=$(history_compose_paths_by_id "$opt_history_spec") || return 1
+            else
+                history_content=$(history_compose_paths_by_pos "$opt_history_spec") || return 1
+            fi
         else
-            history_content=$(history_compose_content "$opt_history_spec") || return 1
+            if [[ "$opt_history_mode" == "fetch-id" ]]; then
+                history_content=$(history_compose_content_by_id "$opt_history_spec") || return 1
+            else
+                history_content=$(history_compose_content_by_pos "$opt_history_spec") || return 1
+            fi
         fi
         opt_from="text"
     fi
@@ -1519,7 +1656,7 @@ main() {
         targets=$(get_targets "$opt_input_selection")
     fi
 
-    if [[ -n "$opt_raw_target" ]]; then
+    if [[ -n "$opt_raw_target" && -z "$history_content" ]]; then
         if [[ -n "$opt_output_file" ]]; then
             read_x11_selection "$opt_input_selection" "$opt_raw_target" > "$opt_output_file"
             echo "${icon_doc}Guardado: $opt_output_file"

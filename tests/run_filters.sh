@@ -140,6 +140,11 @@ assert_eq \
     "$(validate_history_selection_spec '1,3-5,9' && printf 'ok')"
 
 assert_eq \
+    "validate-history-id-spec accepts comma separated event ids" \
+    "ok" \
+    "$(validate_history_id_spec '1981,2307' && printf 'ok')"
+
+assert_eq \
     "expand-history-selection-spec preserves requested order" \
     $'1\n3\n4\n5\n9' \
     "$(expand_history_selection_spec '1,3-5,9')"

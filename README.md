@@ -76,6 +76,8 @@ clipedit [FLAGS]
 | `--target TARGET` | Extract a raw X11 clipboard target, or `paths` with `--history` file selections | `--target text/html` |
 | `--history MODE` | Read from Diodon/Zeitgeist history instead of the live clipboard | `--history 1-3` |
 | `--hist MODE` | Alias for `--history` | |
+| `--history-id ID` | Read from Diodon/Zeitgeist history by stable event ID | `--history-id 1981` |
+| `--hist-id ID` | Alias for `--history-id` | |
 | `--limit N` | Limit rows for `--history list` or `--history search` | `--limit 10` |
 | `--search PATTERN` | Search pattern for `--history list` or `--history search` | `--search clipedit` |
 | `--plain` | Convert to plain text and copy without opening an editor | |
@@ -225,6 +227,9 @@ clipedit --history search clipedit --limit 5
 
 # Recover persisted file-selection paths explicitly
 clipedit --history 342 --target paths --stdout
+
+# Recover a stable Zeitgeist event ID shown by --history list
+clipedit --history-id 1981 --stdout
 ```
 
 ## Diodon History
@@ -245,12 +250,15 @@ Current modes:
 |---------|----------|
 | `clipedit --history 1` | Recover the most recent text clip |
 | `clipedit --history 1-5,7` | Concatenate selected clips in that order |
+| `clipedit --history-id 1981` | Recover a stable Zeitgeist event ID |
 | `clipedit --history list --limit 20` | Show a table of recent clips |
 | `clipedit --history search foo` | Search clip text previews |
 
 Notes:
 
 - Positions are 1-based. Position 1 is the most recent clip, matching Diodon.
+- `--history list` shows both volatile positions and stable Zeitgeist event IDs.
+- Use `--history-id` when you want to recover a specific entry after new clips shift positions.
 - Plain text clips are recovered as normal text.
 - File selections persisted by Diodon/Zeitgeist are recovered as the stored path list.
 - `clipedit --history N --target paths --stdout` makes that file-path intent explicit.
